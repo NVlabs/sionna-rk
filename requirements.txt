@@ -1,0 +1,10 @@
+sionna-no-rt
+numpy
+matplotlib
+nanobind
+onnx
+tf2onnx
+polygraphy
+pandas
+pytest
+tensorrt

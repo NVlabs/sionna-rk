@@ -1,0 +1,11 @@
+common|mini_nonrf_config.yaml|ci-scripts/yaml_files/5g_rfsimulator/mini_nonrf_config.yaml
+common|mysql-healthcheck.sh|ci-scripts/yaml_files/5g_rfsimulator/mysql-healthcheck.sh
+common|nrue.uicc.conf|ci-scripts/conf_files/nrue.uicc.conf
+common|oai_db.sql|ci-scripts/yaml_files/5g_rfsimulator/oai_db.sql
+common|gnb.sa.band78.24prbs.conf|ci-scripts/conf_files/gnb.sa.band78.51prb.usrpb200.conf
+common|gnb.sa.band78.51prbs.conf|ci-scripts/conf_files/gnb.sa.band78.51prb.usrpb200.conf
+common|gnb.sa.band78.106prbs.conf|ci-scripts/conf_files/gnb.sa.band78.51prb.usrpb200.conf
+b200_arm64|docker-compose.yaml|ci-scripts/yaml_files/5g_rfsimulator/docker-compose.yaml
+b200_x86|docker-compose.yaml|ci-scripts/yaml_files/5g_rfsimulator/docker-compose.yaml
+rfsim_arm64|docker-compose.yaml|ci-scripts/yaml_files/5g_rfsimulator/docker-compose.yaml
+rfsim_x86|docker-compose.yaml|ci-scripts/yaml_files/5g_rfsimulator/docker-compose.yaml

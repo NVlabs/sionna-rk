@@ -1,0 +1,26 @@
+SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+The software available under this repository is governed by the Apache 2.0 license.
+In connection with your use of this software, you may receive links to third
+party technology, and your use of third-party technology may be subject to 
+third-party terms, privacy statements or practices. NVIDIA is not responsible
+for the terms, privacy statements or practices of third parties. You acknowledge
+and agree that it is your sole responsibility to obtain any additional
+third-party licenses required to make, have made, use, have used, sell, import,
+and offer for sale products or services that include or incorporate any 
+third-party technology. NVIDIA does not grant to you under the project license
+any necessary patent or other rights, including standard essential patent
+rights, with respect to any such third-party technology.

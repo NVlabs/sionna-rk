@@ -1,0 +1,840 @@
+diff --git .env.template .env.template
+new file mode 100644
+index 0000000..f063792
+--- /dev/null
++++ .env.template
+@@ -0,0 +1,55 @@
++## Example environment file, uncomment and change as needed.
++
++#USRP_SERIAL=XXXXXX
++#USRP_SERIAL_UE=XXXXXX # relevant if UE is used
++
++MINI_CONFIG=../common/mini_nonrf_config.yaml
++GNB_CONFIG=../common/gnb.sa.band78.24prbs.conf
++
++GNB_IMAGE=oai-gnb-cuda
++UE_IMAGE=oai-nr-ue-cuda
++
++GNB_TAG=latest
++UE_TAG=latest
++AMF_TAG=v2.0.1
++SMF_TAG=v2.0.1
++UPF_TAG=v2.0.1
++TRFGEN_TAG=latest
++
++
++##############################
++#### Additional gNB Options
++##############################
++
++GNB_EXTRA_OPTIONS=--thread-pool 6,7,8,9,10,11
++
++# example use a different demapper library
++#GNB_EXTRA_OPTIONS=--loader.demapper.shlibversion _orig
++
++#####
++# GPU-Accelerated LDPC Decoder Tutorial
++#####
++#GNB_EXTRA_OPTIONS=--loader.ldpc.shlibversion _cuda --thread-pool 6,7,8,9,10,11
++
++#####
++# Data Capture Tutorial
++#####
++#GNB_EXTRA_OPTIONS=--loader.demapper.shlibversion _capture --thread-pool 6
++
++#####
++# Neural Demapper Tutorial
++#####
++#GNB_EXTRA_OPTIONS=--loader.demapper.shlibversion _trt --MACRLCs.[0].dl_max_mcs 10 --MACRLCs.[0].ul_max_mcs 10 --thread-pool 6,7,8,9,10,11
++# Note that if extra libraries are compiled separately, you will need to
++# mount it. See docker-compose.override.yaml.template for an example
++
++
++##############################
++#### Additional UE Options (only for soft-ue)
++##############################
++# 24 PRBs config
++UE_EXTRA_OPTIONS=-C 3604800000 -r 24 --numerology 1 --ssb 24 --thread-pool 4,5
++# 51 PRBs config
++#UE_EXTRA_OPTIONS=-C 3309480000 -r 51 --numerology 1 --ssb 238 --thread-pool 4,5
++# 106 PRBs config
++#UE_EXTRA_OPTIONS=-C 3319680000 -r 106 --numerology 1 --ssb 516 --thread-pool 4,5
+diff --git docker-compose.override.yaml.template docker-compose.override.yaml.template
+new file mode 100644
+index 0000000..cb8dce0
+--- /dev/null
++++ docker-compose.override.yaml.template
+@@ -0,0 +1,24 @@
++# this is a template. remove the .template extension to use
++# contents of this file will be merged automatically with docker-compose.yaml
++# uncomment the relevant lines
++
++
++services:
++  oai-gnb:
++    volumes:
++      ##### Data capture tutorial; ensure that .txt files exist and have the right permissions (666)
++      #- ../../logs/demapper_in.txt:/opt/oai-gnb/demapper_in.txt
++      #- ../../logs/demapper_out.txt:/opt/oai-gnb/demapper_out.txt
++      ##### neural demapper tutorial; mount weights and trtengine config
++      # - ../../tutorials/neural_demapper/models/:/opt/oai-gnb/models
++      # - ./demapper_trt.config:/opt/oai-gnb/demapper_trt.config
++    # Run gdbserver for debugging
++    #command: ["gdbserver",":7777","/opt/oai-gnb/bin/nr-softmodem","-O","/opt/oai-gnb/etc/gnb.conf"]
++    # Profile with Nsight Systems
++    #stdin_open: true # docker run -i
++    #tty: true        # docker run -t
++    #entrypoint: /bin/bash
++    #cap_add:
++    # - SYS_ADMIN
++    #volumes:
++    # - /opt/nvidia/nsight-systems/:/opt/nvidia/nsight-systems
+diff --git gnb.sa.band78.106prbs.conf gnb.sa.band78.106prbs.conf
+index a4f2a33..8dcbb28 100644
+--- gnb.sa.band78.106prbs.conf
++++ gnb.sa.band78.106prbs.conf
+@@ -1,4 +1,4 @@
+-Active_gNBs = ( "gNB-in-docker");
++Active_gNBs = ( "gnb-oai");
+ # Asn1_verbosity, choice in: none, info, annoying
+ Asn1_verbosity = "none";
+ 
+@@ -6,17 +6,23 @@ gNBs =
+ (
+  {
+     ////////// Identification parameters:
+-    gNB_ID    =  0xe00;
+-    gNB_name  =  "gNB-in-docker";
++    gNB_ID = 0xe00;
++
++#     cell_type =  "CELL_MACRO_GNB";
++
++    gNB_name  =  "gnb-oai";
+ 
+     // Tracking area code, 0x0000 and 0xfffe are reserved values
+     tracking_area_code  =  1;
+-    plmn_list = ({ mcc = 222; mnc = 01; mnc_length = 2; snssaiList = ({ sst = 1, sd = 0xffffff }) });
++      plmn_list = ({ mcc = 262; mnc = 99; mnc_length = 2; snssaiList = ({ sst = 1, sd = 0xffffff }) });
+ 
+-    nr_cellid = 12345678L;
++    nr_cellid = 12345678L
+ 
+-    ////////// Physical parameters:
++#     tr_s_preference     = "local_mac"
+ 
++    ////////// Physical parameters:
++    sib1_tda            = 15;
++    min_rxtxtime = 6;
+ 
+     servingCellConfigCommon = (
+     {
+@@ -26,44 +32,43 @@ gNBs =
+ 
+ #  downlinkConfigCommon
+     #frequencyInfoDL
+-      # this is 3300.30 MHz + (19 PRBs + 10 SCs)@30kHz SCS (GSCN: 7715)
+-      absoluteFrequencySSB                                             = 620736;
+-      dl_frequencyBand                                                 = 78;
+-      # this is 3300.30 MHz
+-      dl_absoluteFrequencyPointA                                       = 620020;
++      # this is 3300.60 MHz + 53*12*30e-3 MHz = 3319.68
++      absoluteFrequencySSB                                          = 621312;
++      # this is 3300.60 MHz
++      dl_absoluteFrequencyPointA                                       = 620040;
+       #scs-SpecificCarrierList
+         dl_offstToCarrier                                              = 0;
+ # subcarrierSpacing
+ # 0=kHz15, 1=kHz30, 2=kHz60, 3=kHz120
+         dl_subcarrierSpacing                                           = 1;
+-        dl_carrierBandwidth                                            = 51;
++        dl_carrierBandwidth                                            = 106;
+      #initialDownlinkBWP
+       #genericParameters
+-        # this is RBstart=27,L=48 (275*(L-1))+RBstart
+-        initialDLBWPlocationAndBandwidth                               = 13750;
++        # this is RBstart=0,L=106 (275*(L-1))+RBstart
++        initialDLBWPlocationAndBandwidth                                        = 28875;
+ # subcarrierSpacing
+ # 0=kHz15, 1=kHz30, 2=kHz60, 3=kHz120
+-        initialDLBWPsubcarrierSpacing                                   = 1;
++        initialDLBWPsubcarrierSpacing                                           = 1;
+       #pdcch-ConfigCommon
+-        initialDLBWPcontrolResourceSetZero                              = 12;
+-        initialDLBWPsearchSpaceZero                                     = 0;
++        initialDLBWPcontrolResourceSetZero                                      = 11;
++        initialDLBWPsearchSpaceZero                                             = 0;
+ 
+   #uplinkConfigCommon
+      #frequencyInfoUL
+-      ul_frequencyBand                                              = 78;
++      ul_frequencyBand                                                 = 78;
+       #scs-SpecificCarrierList
+-      ul_offstToCarrier                                             = 0;
++      ul_offstToCarrier                                              = 0;
+ # subcarrierSpacing
+ # 0=kHz15, 1=kHz30, 2=kHz60, 3=kHz120
+-      ul_subcarrierSpacing                                          = 1;
+-      ul_carrierBandwidth                                           = 51;
++      ul_subcarrierSpacing                                           = 1;
++      ul_carrierBandwidth                                            = 106;
+       pMax                                                          = 20;
+      #initialUplinkBWP
+       #genericParameters
+-        initialULBWPlocationAndBandwidth                            = 13750;
++        initialULBWPlocationAndBandwidth                                        = 28875;
+ # subcarrierSpacing
+ # 0=kHz15, 1=kHz30, 2=kHz60, 3=kHz120
+-        initialULBWPsubcarrierSpacing                               = 1;
++        initialULBWPsubcarrierSpacing                                           = 1;
+       #rach-ConfigCommon
+         #rach-ConfigGeneric
+           prach_ConfigurationIndex                                  = 98;
+@@ -71,8 +76,8 @@ gNBs =
+ #0 = one, 1=two, 2=four, 3=eight
+           prach_msg1_FDM                                            = 0;
+           prach_msg1_FrequencyStart                                 = 0;
+-          zeroCorrelationZoneConfig                                 = 13;
+-          preambleReceivedTargetPower                               = -96;
++          zeroCorrelationZoneConfig                                 = 12;
++          preambleReceivedTargetPower                               = -104;
+ #preamblTransMax (0...10) = (3,4,5,6,7,8,10,20,50,100,200)
+           preambleTransMax                                          = 6;
+ #powerRampingStep
+@@ -83,9 +88,9 @@ gNBs =
+         ra_ResponseWindow                                           = 4;
+ #ssb_perRACH_OccasionAndCB_PreamblesPerSSB_PR
+ #1=oneeighth,2=onefourth,3=half,4=one,5=two,6=four,7=eight,8=sixteen
+-        ssb_perRACH_OccasionAndCB_PreamblesPerSSB_PR                = 4;
++        ssb_perRACH_OccasionAndCB_PreamblesPerSSB_PR                = 3;
+ #oneHalf (0..15) 4,8,12,16,...60,64
+-        ssb_perRACH_OccasionAndCB_PreamblesPerSSB                   = 14;
++        ssb_perRACH_OccasionAndCB_PreamblesPerSSB                   = 15;
+ #ra_ContentionResolutionTimer
+ #(0..7) 8,16,24,32,40,48,56,64
+         ra_ContentionResolutionTimer                                = 7;
+@@ -139,13 +144,14 @@ gNBs =
+       nrofDownlinkSlots                                             = 7;
+       nrofDownlinkSymbols                                           = 6;
+       nrofUplinkSlots                                               = 2;
+-      nrofUplinkSymbols                                             = 4;
++      nrofUplinkSymbols                                             = 0;
+ 
+-      ssPBCH_BlockPower                                             = -25;
++  ssPBCH_BlockPower                                             = -25;
+   }
+ 
+   );
+ 
++
+     # ------- SCTP definitions
+     SCTP :
+     {
+@@ -154,57 +160,65 @@ gNBs =
+         SCTP_OUTSTREAMS = 2;
+     };
+ 
+-
+     ////////// AMF parameters:
+-    amf_ip_address = ({ ipv4 = "172.21.16.137"; });
++        amf_ip_address = ({ ipv4 = "192.168.71.132"; });
+ 
++        NETWORK_INTERFACES :
++        {
+ 
+-    NETWORK_INTERFACES :
+-    {
+-        GNB_IPV4_ADDRESS_FOR_NG_AMF              = "172.21.16.109";
+-        GNB_IPV4_ADDRESS_FOR_NGU                 = "172.21.16.109";
+-        GNB_PORT_FOR_S1U                         = 2152; # Spec 2152
+-    };
++           GNB_IPV4_ADDRESS_FOR_NG_AMF              = "192.168.71.140";
++           GNB_IPV4_ADDRESS_FOR_NGU                 = "192.168.71.140";
++           GNB_PORT_FOR_S1U                         = 2152; # Spec 2152
++        };
+ 
+   }
+ );
+ 
+ MACRLCs = (
+-{
+-  num_cc                      = 1;
+-  tr_s_preference             = "local_L1";
+-  tr_n_preference             = "local_RRC";
+-  pusch_TargetSNRx10          = 200;
+-  pucch_TargetSNRx10          = 200;
+-  ul_prbblack_SNR_threshold   = 10;
+-}
++  {
++    num_cc           = 1;
++    tr_s_preference  = "local_L1";
++    tr_n_preference  = "local_RRC";
++    pusch_TargetSNRx10 = 200;
++    pucch_TargetSNRx10 = 200;
++    pusch_FailureThres          = 10;
++    ul_prbblack_SNR_threshold   = 10;
++  }
+ );
+ 
+ L1s = (
+ {
+   num_cc = 1;
+   tr_n_preference       = "local_mac";
++  #pusch_proc_threads    = 8;
++  max_ldpc_iterations   = 8;
+   prach_dtx_threshold   = 120;
+   pucch0_dtx_threshold  = 100;
++  pusch0_dtx_threshold  = 100;
+   ofdm_offset_divisor   = 8; #set this to UINT_MAX for offset 0
++  L1_rx_thread_core = 1;
++  L1_tx_thread_core = 2;
+ }
+ );
+ 
+ RUs = (
+-{
+-  local_rf       = "yes"
+-  nb_tx          = 1
+-  nb_rx          = 1
+-  att_tx         = 14;
+-  att_rx         = 14;
+-  bands          = [78];
+-  max_pdschReferenceSignalPower = -27;
+-  max_rxgain                    = 114;
+-  eNB_instances  = [0];
+-  #beamforming 1x4 matrix:
+-  bf_weights = [0x00007fff, 0x0000, 0x0000, 0x0000];
+-  clock_src = "internal";
+-}
++    {
++       local_rf       = "yes"
++        nb_tx          = 1
++        nb_rx          = 1
++        att_tx         = 6 # ranges 6-10 if the UE is close to the B210 antennas. Leave 0 otherwise
++        att_rx         = 6; # ranges 6-10 if the UE is close to the B210 antennas. Leave 0 otherwise
++        bands          = [78];
++        max_pdschReferenceSignalPower = -27;
++        max_rxgain                    = 114;
++        eNB_instances  = [0];
++        ##beamforming 1x2 matrix: 1 layer x 2 antennas
++        bf_weights = [0x00007fff, 0x0000];
++        clock_src = "internal";
++        tp_cores = [4,5,6,7]; # ru thread pool cores
++        #num_tp_cores   = 4;
++        ru_thread_core = 3;
++    }
+ );
+ 
+ 
+@@ -237,3 +251,33 @@ log_config :
+   ngap_log_level                        ="debug";
+   f1ap_log_level                        ="debug";
+ };
++
++rfsimulator: {
++    serveraddr = "server";
++};
++
++# channel model used for RF simulator
++channelmod = {
++      max_chan = 10;
++      modellist = "modellist_rfsimu_1";
++      modellist_rfsimu_1 = (
++        { # DL, modify on UE side
++          model_name     = "rfsimu_channel_enB0";
++          type           = "AWGN";
++          ploss_dB       = 10;
++          noise_power_dB = -6.;
++          forgetfact     = 0;
++          offset         = 0;
++          ds_tdl         = 0;
++        },
++        { # UL, modify on gNB side
++          model_name     = "rfsimu_channel_ue0";
++          type           = "AWGN";
++          ploss_dB       = 10;
++          noise_power_dB = -8.;
++          forgetfact     = 0;
++          offset         = 0;
++          ds_tdl         = 0;
++        }
++      );
++    };
+diff --git gnb.sa.band78.24prbs.conf gnb.sa.band78.24prbs.conf
+index a4f2a33..c06ada7 100644
+--- gnb.sa.band78.24prbs.conf
++++ gnb.sa.band78.24prbs.conf
+@@ -1,4 +1,4 @@
+-Active_gNBs = ( "gNB-in-docker");
++Active_gNBs = ( "gNB-oai");
+ # Asn1_verbosity, choice in: none, info, annoying
+ Asn1_verbosity = "none";
+ 
+@@ -7,16 +7,26 @@ gNBs =
+  {
+     ////////// Identification parameters:
+     gNB_ID    =  0xe00;
+-    gNB_name  =  "gNB-in-docker";
++    gNB_name  =  "gNB-oai";
+ 
+     // Tracking area code, 0x0000 and 0xfffe are reserved values
+     tracking_area_code  =  1;
+-    plmn_list = ({ mcc = 222; mnc = 01; mnc_length = 2; snssaiList = ({ sst = 1, sd = 0xffffff }) });
++      plmn_list = ({ mcc = 262; mnc = 99; mnc_length = 2; snssaiList = ({ sst = 1, sd = 0xffffff }) });
+ 
+     nr_cellid = 12345678L;
+ 
+     ////////// Physical parameters:
+ 
++    sib1_tda                    = 15;
++    min_rxtxtime                = 6;
++    # empirical observation: 6 required for USRP-based UE
++
++  pdcch_ConfigSIB1 = (
++      {
++        controlResourceSetZero = 2;
++        searchSpaceZero = 0;
++      }
++      );
+ 
+     servingCellConfigCommon = (
+     {
+@@ -26,26 +36,26 @@ gNBs =
+ 
+ #  downlinkConfigCommon
+     #frequencyInfoDL
+-      # this is 3300.30 MHz + (19 PRBs + 10 SCs)@30kHz SCS (GSCN: 7715)
+-      absoluteFrequencySSB                                             = 620736;
++      # this is 3600 MHz + 12 PRBs@30kHz SCS (same as initial BWP)
++      absoluteFrequencySSB                                             = 640320;
+       dl_frequencyBand                                                 = 78;
+-      # this is 3300.30 MHz
+-      dl_absoluteFrequencyPointA                                       = 620020;
++      # this is 3600 MHz
++      dl_absoluteFrequencyPointA                                       = 640032;
+       #scs-SpecificCarrierList
+         dl_offstToCarrier                                              = 0;
+ # subcarrierSpacing
+ # 0=kHz15, 1=kHz30, 2=kHz60, 3=kHz120
+         dl_subcarrierSpacing                                           = 1;
+-        dl_carrierBandwidth                                            = 51;
++        dl_carrierBandwidth                                            = 24;
+      #initialDownlinkBWP
+       #genericParameters
+         # this is RBstart=27,L=48 (275*(L-1))+RBstart
+-        initialDLBWPlocationAndBandwidth                               = 13750;
++        initialDLBWPlocationAndBandwidth                               = 6325;
+ # subcarrierSpacing
+ # 0=kHz15, 1=kHz30, 2=kHz60, 3=kHz120
+         initialDLBWPsubcarrierSpacing                                   = 1;
+       #pdcch-ConfigCommon
+-        initialDLBWPcontrolResourceSetZero                              = 12;
++        initialDLBWPcontrolResourceSetZero                              = 2;
+         initialDLBWPsearchSpaceZero                                     = 0;
+ 
+   #uplinkConfigCommon
+@@ -56,11 +66,11 @@ gNBs =
+ # subcarrierSpacing
+ # 0=kHz15, 1=kHz30, 2=kHz60, 3=kHz120
+       ul_subcarrierSpacing                                          = 1;
+-      ul_carrierBandwidth                                           = 51;
++      ul_carrierBandwidth                                           = 24;
+       pMax                                                          = 20;
+      #initialUplinkBWP
+       #genericParameters
+-        initialULBWPlocationAndBandwidth                            = 13750;
++        initialULBWPlocationAndBandwidth                            = 6325;
+ # subcarrierSpacing
+ # 0=kHz15, 1=kHz30, 2=kHz60, 3=kHz120
+         initialULBWPsubcarrierSpacing                               = 1;
+@@ -139,7 +149,7 @@ gNBs =
+       nrofDownlinkSlots                                             = 7;
+       nrofDownlinkSymbols                                           = 6;
+       nrofUplinkSlots                                               = 2;
+-      nrofUplinkSymbols                                             = 4;
++      nrofUplinkSymbols                                             = 0;
+ 
+       ssPBCH_BlockPower                                             = -25;
+   }
+@@ -156,13 +166,13 @@ gNBs =
+ 
+ 
+     ////////// AMF parameters:
+-    amf_ip_address = ({ ipv4 = "172.21.16.137"; });
++    amf_ip_address = ({ ipv4 = "192.168.71.132"; });
+ 
+ 
+     NETWORK_INTERFACES :
+     {
+-        GNB_IPV4_ADDRESS_FOR_NG_AMF              = "172.21.16.109";
+-        GNB_IPV4_ADDRESS_FOR_NGU                 = "172.21.16.109";
++        GNB_IPV4_ADDRESS_FOR_NG_AMF              = "192.168.71.140";
++        GNB_IPV4_ADDRESS_FOR_NGU                 = "192.168.71.140";
+         GNB_PORT_FOR_S1U                         = 2152; # Spec 2152
+     };
+ 
+@@ -176,6 +186,10 @@ MACRLCs = (
+   tr_n_preference             = "local_RRC";
+   pusch_TargetSNRx10          = 200;
+   pucch_TargetSNRx10          = 200;
++  pusch_FailureThres          = 10;
++  #ul_max_mcs                  = 14;
++  #dl_max_mcs                  = 14;
++  #ul_bler_target_lower        = 0;
+   ul_prbblack_SNR_threshold   = 10;
+ }
+ );
+@@ -184,19 +198,24 @@ L1s = (
+ {
+   num_cc = 1;
+   tr_n_preference       = "local_mac";
++  #pusch_proc_threads    = 8;
++  max_ldpc_iterations   = 8;
+   prach_dtx_threshold   = 120;
+   pucch0_dtx_threshold  = 100;
++  pusch0_dtx_threshold  = 100;
+   ofdm_offset_divisor   = 8; #set this to UINT_MAX for offset 0
++  L1_rx_thread_core = 1;
++  L1_tx_thread_core = 2;
+ }
+ );
+ 
+ RUs = (
+ {
+   local_rf       = "yes"
+-  nb_tx          = 1
+-  nb_rx          = 1
+-  att_tx         = 14;
+-  att_rx         = 14;
++  nb_tx          = 1 # SISO #2;MIMO
++  nb_rx          = 1 # SISO #2;MIMO
++  att_tx         = 0; # ranges 6-10 if the UE is close to the B210 antennas. Leave 0 otherwise
++  att_rx         = 0; # ranges 6-10 if the UE is close to the B210 antennas. Leave 0 otherwise
+   bands          = [78];
+   max_pdschReferenceSignalPower = -27;
+   max_rxgain                    = 114;
+@@ -204,10 +223,14 @@ RUs = (
+   #beamforming 1x4 matrix:
+   bf_weights = [0x00007fff, 0x0000, 0x0000, 0x0000];
+   clock_src = "internal";
++  tp_cores = [4,5,6,7]; # ru thread pool cores
++  #num_tp_cores   = 4;
++  ru_thread_core = 3;
+ }
+ );
+ 
+ 
++
+ security = {
+   # preferred ciphering algorithms
+   # the first one of the list that an UE supports in chosen
+@@ -237,3 +260,33 @@ log_config :
+   ngap_log_level                        ="debug";
+   f1ap_log_level                        ="debug";
+ };
++
++rfsimulator: {
++    serveraddr = "server";
++};
++
++# channel model used for RF simulator
++channelmod = {
++      max_chan = 10;
++      modellist = "modellist_rfsimu_1";
++      modellist_rfsimu_1 = (
++        { # DL, modify on UE side
++          model_name     = "rfsimu_channel_enB0";
++          type           = "AWGN";
++          ploss_dB       = 10;
++          noise_power_dB = -6.;
++          forgetfact     = 0;
++          offset         = 0;
++          ds_tdl         = 0;
++        },
++        { # UL, modify on gNB side
++          model_name     = "rfsimu_channel_ue0";
++          type           = "AWGN";
++          ploss_dB       = 10;
++          noise_power_dB = -8.;
++          forgetfact     = 0;
++          offset         = 0;
++          ds_tdl         = 0;
++        }
++      );
++    };
+diff --git gnb.sa.band78.51prbs.conf gnb.sa.band78.51prbs.conf
+index a4f2a33..91eb82a 100644
+--- gnb.sa.band78.51prbs.conf
++++ gnb.sa.band78.51prbs.conf
+@@ -1,4 +1,4 @@
+-Active_gNBs = ( "gNB-in-docker");
++Active_gNBs = ( "gNB-oai");
+ # Asn1_verbosity, choice in: none, info, annoying
+ Asn1_verbosity = "none";
+ 
+@@ -7,16 +7,19 @@ gNBs =
+  {
+     ////////// Identification parameters:
+     gNB_ID    =  0xe00;
+-    gNB_name  =  "gNB-in-docker";
++    gNB_name  =  "gNB-oai";
+ 
+     // Tracking area code, 0x0000 and 0xfffe are reserved values
+     tracking_area_code  =  1;
+-    plmn_list = ({ mcc = 222; mnc = 01; mnc_length = 2; snssaiList = ({ sst = 1, sd = 0xffffff }) });
++    plmn_list = ({ mcc = 262; mnc = 99; mnc_length = 2; snssaiList = ({ sst = 1, sd = 0xffffff }) });
++
+ 
+     nr_cellid = 12345678L;
+ 
+     ////////// Physical parameters:
+ 
++    sib1_tda                                                  = 15;
++    min_rxtxtime                                              = 6;
+ 
+     servingCellConfigCommon = (
+     {
+@@ -139,7 +142,7 @@ gNBs =
+       nrofDownlinkSlots                                             = 7;
+       nrofDownlinkSymbols                                           = 6;
+       nrofUplinkSlots                                               = 2;
+-      nrofUplinkSymbols                                             = 4;
++      nrofUplinkSymbols                                             = 0;
+ 
+       ssPBCH_BlockPower                                             = -25;
+   }
+@@ -156,13 +159,13 @@ gNBs =
+ 
+ 
+     ////////// AMF parameters:
+-    amf_ip_address = ({ ipv4 = "172.21.16.137"; });
++    amf_ip_address = ({ ipv4 = "192.168.71.132"; });
+ 
+ 
+     NETWORK_INTERFACES :
+     {
+-        GNB_IPV4_ADDRESS_FOR_NG_AMF              = "172.21.16.109";
+-        GNB_IPV4_ADDRESS_FOR_NGU                 = "172.21.16.109";
++        GNB_IPV4_ADDRESS_FOR_NG_AMF              = "192.168.71.140";
++        GNB_IPV4_ADDRESS_FOR_NGU                 = "192.168.71.140";
+         GNB_PORT_FOR_S1U                         = 2152; # Spec 2152
+     };
+ 
+@@ -176,6 +179,10 @@ MACRLCs = (
+   tr_n_preference             = "local_RRC";
+   pusch_TargetSNRx10          = 200;
+   pucch_TargetSNRx10          = 200;
++  pusch_FailureThres          = 10;
++  #ul_max_mcs                  = 9;
++  #dl_max_mcs                  = 9;
++  #ul_bler_target_lower        = 0;
+   ul_prbblack_SNR_threshold   = 10;
+ }
+ );
+@@ -184,19 +191,24 @@ L1s = (
+ {
+   num_cc = 1;
+   tr_n_preference       = "local_mac";
++  #pusch_proc_threads    = 8;
++  max_ldpc_iterations   = 8;
+   prach_dtx_threshold   = 120;
+   pucch0_dtx_threshold  = 100;
++  pusch0_dtx_threshold  = 100;
+   ofdm_offset_divisor   = 8; #set this to UINT_MAX for offset 0
++  L1_rx_thread_core = 1;
++  L1_tx_thread_core = 2;
+ }
+ );
+ 
+ RUs = (
+ {
+   local_rf       = "yes"
+-  nb_tx          = 1
+-  nb_rx          = 1
+-  att_tx         = 14;
+-  att_rx         = 14;
++  nb_tx          = 1 # SISO #2;MIMO
++  nb_rx          = 1 # SISO #2;MIMO
++  att_tx         = 6; # ranges 6-10 if the UE is close to the B210 antennas. Leave 0 otherwise
++  att_rx         = 6; # ranges 6-10 if the UE is close to the B210 antennas. Leave 0 otherwise
+   bands          = [78];
+   max_pdschReferenceSignalPower = -27;
+   max_rxgain                    = 114;
+@@ -204,10 +216,12 @@ RUs = (
+   #beamforming 1x4 matrix:
+   bf_weights = [0x00007fff, 0x0000, 0x0000, 0x0000];
+   clock_src = "internal";
++  tp_cores = [4,5,6,7]; # ru thread pool cores
++  #num_tp_cores   = 4;
++  ru_thread_core = 3;
+ }
+ );
+ 
+-
+ security = {
+   # preferred ciphering algorithms
+   # the first one of the list that an UE supports in chosen
+@@ -237,3 +251,34 @@ log_config :
+   ngap_log_level                        ="debug";
+   f1ap_log_level                        ="debug";
+ };
++
++
++rfsimulator: {
++    serveraddr = "server";
++};
++
++# channel model used for RF simulator
++channelmod = {
++      max_chan = 10;
++      modellist = "modellist_rfsimu_1";
++      modellist_rfsimu_1 = (
++        { # DL, modify on UE side
++          model_name     = "rfsimu_channel_enB0";
++          type           = "AWGN";
++          ploss_dB       = 10;
++          noise_power_dB = -6.;
++          forgetfact     = 0;
++          offset         = 0;
++          ds_tdl         = 0;
++        },
++        { # UL, modify on gNB side
++          model_name     = "rfsimu_channel_ue0";
++          type           = "AWGN";
++          ploss_dB       = 10;
++          noise_power_dB = -8.;
++          forgetfact     = 0;
++          offset         = 0;
++          ds_tdl         = 0;
++        }
++      );
++    };
+diff --git mini_nonrf_config.yaml mini_nonrf_config.yaml
+index 10fb5bc..8460624 100644
+--- mini_nonrf_config.yaml
++++ mini_nonrf_config.yaml
+@@ -111,13 +111,13 @@ amf:
+   statistics_timer_interval: 20  # in seconds
+   emergency_support: false
+   served_guami_list:
+-    - mcc: 208
++    - mcc: 262
+       mnc: 99
+       amf_region_id: 01
+       amf_set_id: 001
+       amf_pointer: 01
+   plmn_support_list:
+-    - mcc: 208
++    - mcc: 262
+       mnc: 99
+       tac: 0x0001
+       nssai:
+@@ -149,7 +149,7 @@ smf:
+           - interfaceType: "N6"
+             networkInstance: "core.oai.org"
+   ue_dns:
+-    primary_ipv4: "172.21.3.100"
++    primary_ipv4: "8.8.8.8"
+     primary_ipv6: "2001:4860:4860::8888"
+     secondary_ipv4: "8.8.8.8"
+     secondary_ipv6: "2001:4860:4860::8888"
+@@ -175,7 +175,7 @@ upf:
+   support_features:
+     enable_bpf_datapath: no    # If "on": BPF is used as datapath else simpleswitch is used, DEFAULT= off
+     enable_snat: yes           # If "on": Source natting is done for UE, DEFAULT= off
+-  remote_n6_gw: 127.0.0.1      # Dummy host since simple-switch does not use N6 GW
++  remote_n6_gw: "192.168.72.135"      # Dummy host since simple-switch does not use N6 GW
+   upf_info:
+     sNssaiUpfInfoList:
+       - sNssai: *embb_slice1
+diff --git nrue.uicc.conf nrue.uicc.conf
+index afd2c01..c42bace 100644
+--- nrue.uicc.conf
++++ nrue.uicc.conf
+@@ -1,5 +1,5 @@
+ uicc0 = {
+-  imsi = "208990100001100";
++  imsi = "262990100000832";
+   key = "fec86ba6eb707ed08905757b1bb44b8f";
+   opc= "C42449363BBAD02B66D16BC975D77CC1";
+   dnn= "oai";
+@@ -9,27 +9,28 @@ uicc0 = {
+ #/* configuration for channel modelisation */
+ #/* To be included in main config file when */
+ #/* channel modelisation is used (rfsimulator with chanmod options enabled) */
++# channel model used for RF simulator
+ channelmod = {
+-  max_chan = 10;
+-  modellist = "modellist_rfsimu_1";
+-  modellist_rfsimu_1 = (
+-    { # DL, modify on UE side
+-      model_name     = "rfsimu_channel_enB0"
+-      type           = "AWGN";
+-      ploss_dB       = 20;
+-      noise_power_dB = -4;
+-      forgetfact     = 0;
+-      offset         = 0;
+-      ds_tdl         = 0;
+-    },
+-    { # UL, modify on gNB side
+-      model_name     = "rfsimu_channel_ue0"
+-      type           = "AWGN";
+-      ploss_dB       = 20;
+-      noise_power_dB = -2;
+-      forgetfact     = 0;
+-      offset         = 0;
+-      ds_tdl         = 0;
+-    }
+-  );
+-};
++      max_chan = 10;
++      modellist = "modellist_rfsimu_1";
++      modellist_rfsimu_1 = (
++        { # DL, modify on UE side
++          model_name     = "rfsimu_channel_enB0";
++          type           = "AWGN";
++          ploss_dB       = 10;
++          noise_power_dB = -6.;
++          forgetfact     = 0;
++          offset         = 0;
++          ds_tdl         = 0;
++        },
++        { # UL, modify on gNB side
++          model_name     = "rfsimu_channel_ue0";
++          type           = "AWGN";
++          ploss_dB       = 10;
++          noise_power_dB = -8.;
++          forgetfact     = 0;
++          offset         = 0;
++          ds_tdl         = 0;
++        }
++      );
++    };
+diff --git oai_db.sql oai_db.sql
+index ec5e497..aa30b46 100644
+--- oai_db.sql
++++ oai_db.sql
+@@ -101,6 +101,11 @@ CREATE TABLE `pdn` (
+ LOCK TABLES `pdn` WRITE;
+ /*!40000 ALTER TABLE `pdn` DISABLE KEYS */;
+ INSERT INTO `pdn` VALUES (1,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930000000001',9,15,'DISABLED','ENABLED','LIPA-only'),(41,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'20834123456789',9,15,'DISABLED','ENABLED','LIPA-only'),(40,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'20810000001234',9,15,'DISABLED','ENABLED','LIPA-only'),(42,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'31002890832150',9,15,'DISABLED','ENABLED','LIPA-only'),(16,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000002',9,15,'DISABLED','ENABLED','LIPA-only'),(43,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'001010123456789',9,15,'DISABLED','ENABLED','LIPA-only'),(2,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930000000002',9,15,'DISABLED','ENABLED','LIPA-only'),(3,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930000000003',9,15,'DISABLED','ENABLED','LIPA-only'),(4,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930000000004',9,15,'DISABLED','ENABLED','LIPA-only'),(5,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930000000005',9,15,'DISABLED','ENABLED','LIPA-only'),(6,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930000000006',9,15,'DISABLED','ENABLED','LIPA-only'),(7,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930000000007',9,15,'DISABLED','ENABLED','LIPA-only'),(8,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208940000000001',9,15,'DISABLED','ENABLED','LIPA-only'),(9,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208940000000002',9,15,'DISABLED','ENABLED','LIPA-only'),(10,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208940000000003',9,15,'DISABLED','ENABLED','LIPA-only'),(11,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208940000000004',9,15,'DISABLED','ENABLED','LIPA-only'),(12,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208940000000005',9,15,'DISABLED','ENABLED','LIPA-only'),(13,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208940000000006',9,15,'DISABLED','ENABLED','LIPA-only'),(14,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208940000000007',9,15,'DISABLED','ENABLED','LIPA-only'),(15,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000001',9,15,'DISABLED','ENABLED','LIPA-only'),(17,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000003',9,15,'DISABLED','ENABLED','LIPA-only'),(18,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000004',9,15,'DISABLED','ENABLED','LIPA-only'),(19,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000005',9,15,'DISABLED','ENABLED','LIPA-only'),(20,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000006',9,15,'DISABLED','ENABLED','LIPA-only'),(21,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000007',9,15,'DISABLED','ENABLED','LIPA-only'),(22,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001100',9,15,'DISABLED','ENABLED','LIPA-only'),(23,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001101',9,15,'DISABLED','ENABLED','LIPA-only'),(24,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001102',9,15,'DISABLED','ENABLED','LIPA-only'),(25,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001103',9,15,'DISABLED','ENABLED','LIPA-only'),(26,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001104',9,15,'DISABLED','ENABLED','LIPA-only'),(27,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001105',9,15,'DISABLED','ENABLED','LIPA-only'),(28,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001106',9,15,'DISABLED','ENABLED','LIPA-only'),(29,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001107',9,15,'DISABLED','ENABLED','LIPA-only'),(30,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001108',9,15,'DISABLED','ENABLED','LIPA-only'),(31,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001109',9,15,'DISABLED','ENABLED','LIPA-only'),(32,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001110',9,15,'DISABLED','ENABLED','LIPA-only'),(33,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930100001111',9,15,'DISABLED','ENABLED','LIPA-only'),(34,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930100001112',9,15,'DISABLED','ENABLED','LIPA-only'),(35,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930100001113',9,15,'DISABLED','ENABLED','LIPA-only'),(44,'operator','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930100001113',9,15,'DISABLED','ENABLED','LIPA-only'),(45,'operator','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930100001112',9,15,'DISABLED','ENABLED','LIPA-only'),(46,'operator','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930100001111',9,15,'DISABLED','ENABLED','LIPA-only'),(47,'operator','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000002',9,15,'DISABLED','ENABLED','LIPA-only'),(48,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000008',9,15,'DISABLED','ENABLED','LIPA-only'),(49,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000009',9,15,'DISABLED','ENABLED','LIPA-only'),(50,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000010',9,15,'DISABLED','ENABLED','LIPA-only'),(51,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000011',9,15,'DISABLED','ENABLED','LIPA-only'),(52,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000012',9,15,'DISABLED','ENABLED','LIPA-only'),(53,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000013',9,15,'DISABLED','ENABLED','LIPA-only'),(54,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000014',9,15,'DISABLED','ENABLED','LIPA-only'),(55,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000015',9,15,'DISABLED','ENABLED','LIPA-only'),(56,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001118',9,15,'DISABLED','ENABLED','LIPA-only'),(57,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001121',9,15,'DISABLED','ENABLED','LIPA-only'),(58,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001120',9,15,'DISABLED','ENABLED','LIPA-only'),(59,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001119',9,15,'DISABLED','ENABLED','LIPA-only');
++INSERT INTO `pdn` VALUES (60,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'262990100001101',9,15,'DISABLED','ENABLED','LIPA-only');
++INSERT INTO `pdn` VALUES (61,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'262990100016069',9,15,'DISABLED','ENABLED','LIPA-only');
++INSERT INTO `pdn` VALUES (62,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'262990100000832',9,15,'DISABLED','ENABLED','LIPA-only');
++
++
+ /*!40000 ALTER TABLE `pdn` ENABLE KEYS */;
+ UNLOCK TABLES;
+ 
+@@ -217,6 +222,12 @@ INSERT INTO `users` VALUES ('208950000000037','380561234567','55000000000001',NU
+ INSERT INTO `users` VALUES ('208950000000038','380561234567','55000000000001',NULL,'PURGED',50,40000000,100000000,47,0000000000,1,0x0C0A34601D4F07677303652C0462535B,0,0,0x40,'ebd07771ace8677a',0x63bfa50ee6523365ff14c1f45f88737d);
+ INSERT INTO `users` VALUES ('208950000000039','380561234567','55000000000001',NULL,'PURGED',50,40000000,100000000,47,0000000000,1,0x0C0A34601D4F07677303652C0462535B,0,0,0x40,'ebd07771ace8677a',0x63bfa50ee6523365ff14c1f45f88737d);
+ INSERT INTO `users` VALUES ('208950000000040','380561234567','55000000000001',NULL,'PURGED',50,40000000,100000000,47,0000000000,1,0x0C0A34601D4F07677303652C0462535B,0,0,0x40,'ebd07771ace8677a',0x63bfa50ee6523365ff14c1f45f88737d);
++
++INSERT INTO `users` VALUES ('208920100001831','00000831','868371052647522',NULL,'PURGED',50,40000000,100000000,47,0000000000,1,0x0C0A34601D4F07677303652C0462535B,0,0,0x40,'ebd07771ace8677a',0x63bfa50ee6523365ff14c1f45f88737d);
++INSERT INTO `users` VALUES ('262990100000832','1','868371052647522',NULL,'PURGED',50,40000000,100000000,47,0000000000,1,0xfec86ba6eb707ed08905757b1bb44b8f,0,0,0x80,'ebd07771ace8677a',0xc42449363bbad02b66d16bc975d77cc1);
++INSERT INTO `users` VALUES ('262990100001101','1','868371052647522',NULL,'PURGED',50,40000000,100000000,47,0000000000,1,0xfec86ba6eb707ed08905757b1bb44b8f,0,0,0x80,'ebd07771ace8677a',0xc42449363bbad02b66d16bc975d77cc1);
++INSERT INTO `users` VALUES ('262990100016069','1','868371052647522',NULL,'PURGED',50,40000000,100000000,47,0000000000,1,0xfec86ba6eb707ed08905757b1bb44b8f,0,0,0x80,'ebd07771ace8677a',0xc42449363bbad02b66d16bc975d77cc1);
++
+ /*!40000 ALTER TABLE `users` ENABLE KEYS */;
+ UNLOCK TABLES;
+ /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;

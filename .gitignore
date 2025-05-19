@@ -1,0 +1,17 @@
+.env/
+.env
+*.pyc
+__pycache__/
+doc/build
+doc/public
+profiler/reports
+dev/
+configs/**/.env
+configs/**/docker-compose.override.yaml
+**/demapper_in.txt
+**/demapper_out.txt
+.vscode/settings.json
+tutorials/ldpc_cuda/build
+tutorials/ldpc_cuda/test/*.so
+ext/
+

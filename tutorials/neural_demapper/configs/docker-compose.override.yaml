@@ -1,0 +1,13 @@
+#
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+
+# this is a template. remove the .template extension to use
+# contents of this file will be merged automatically with docker-compose.yaml
+
+services:
+  oai-gnb:
+    volumes:
+      - ./demapper_in.txt:/opt/oai-gnb/demapper_in.txt
+      - ./demapper_out.txt:/opt/oai-gnb/demapper_out.txt
