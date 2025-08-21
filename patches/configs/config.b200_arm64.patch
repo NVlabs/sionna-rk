@@ -96,7 +96,7 @@ index 0000000..ece3aed
 +    #volumes:
 +    # - /opt/nvidia/nsight-systems/:/opt/nvidia/nsight-systems
 diff --git docker-compose.yaml docker-compose.yaml
-index 06c945a..27de686 100644
+index 06c945a..9789bec 100644
 --- docker-compose.yaml
 +++ docker-compose.yaml
 @@ -1,10 +1,10 @@
@@ -113,7 +113,7 @@ index 06c945a..27de686 100644
          environment:
              - TZ=Europe/Paris
              - MYSQL_DATABASE=oai_db
-@@ -20,53 +20,62 @@ services:
+@@ -20,55 +20,65 @@ services:
              public_net:
                  ipv4_address: 192.168.71.131
      oai-amf:
@@ -159,6 +159,7 @@ index 06c945a..27de686 100644
 +        # routing options. Call entrypoint afterwards and run upf scripts.
 +        entrypoint: /bin/bash -c \
 +                    "echo '200 eth1_table' >> /etc/iproute2/rt_tables;"\
++                    "ip route del default;"\
 +                    "ip route add default via 192.168.72.129 dev eth1 table eth1_table;"\
 +                    "ip rule add from 12.1.1.0/24 table eth1_table;"\
 +                    "/openair-upf/bin/oai_upf -c /openair-upf/etc/config.yaml -o"
@@ -187,9 +188,12 @@ index 06c945a..27de686 100644
 +        container_name: oai-ext-dn
 +        image: trf-gen-cn5g:${TRFGEN_TAG:-latest}
          entrypoint: /bin/bash -c \
-               "iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE;"\
+-              "iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE;"\
++              "iptables-legacy -t nat -A POSTROUTING -o eth0 -j MASQUERADE;"\
                "ip route add 12.1.1.0/24 via 192.168.72.134 dev eth0; sleep infinity"
-@@ -80,261 +89,56 @@ services:
+         depends_on:
+             - oai-upf
+@@ -80,261 +90,56 @@ services:
              interval: 10s
              timeout: 5s
              retries: 5
@@ -477,7 +481,7 @@ index 06c945a..27de686 100644
          healthcheck:
              test: /bin/bash -c "pgrep nr-uesoftmodem"
              interval: 10s
-@@ -344,17 +148,17 @@ services:
+@@ -344,17 +149,17 @@ services:
  networks:
      public_net:
          driver: bridge

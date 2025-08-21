@@ -491,10 +491,10 @@ index 0000000000..34d30a93bb
 +CMD ["/opt/oai-enb/bin/lte-softmodem", "-O", "/opt/oai-enb/etc/enb.conf"]
 diff --git a/docker/Dockerfile.gNB.cuda.aarch64 b/docker/Dockerfile.gNB.cuda.aarch64
 new file mode 100644
-index 0000000000..5e4bdbdeb1
+index 0000000000..0f3221ec5d
 --- /dev/null
 +++ b/docker/Dockerfile.gNB.cuda.aarch64
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,136 @@
 +#/*
 +# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
 +# * contributor license agreements.  See the NOTICE file distributed with
@@ -550,6 +550,7 @@ index 0000000000..5e4bdbdeb1
 +        tzdata \
 +        libblas3 \
 +        libconfig9 \
++	    libforms2 \
 +        openssl \
 +        net-tools \
 +        iperf \
@@ -557,6 +558,7 @@ index 0000000000..5e4bdbdeb1
 +        iproute2 \
 +        iputils-ping \
 +        gdb \
++	gdbserver \
 +        python3 \
 +        python3-six \
 +        python3-requests \
@@ -591,6 +593,8 @@ index 0000000000..5e4bdbdeb1
 +    /oai-ran/cmake_targets/ran_build/build/libldpc*.so \
 +    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv.so \
 +    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv_ci.so \
++    /oai-ran/cmake_targets/ran_build/build/libnrscope.so \
++    /oai-ran/cmake_targets/ran_build/build/libuescope.so \
 +    /usr/local/lib/
 +
 +# Now we are copying from builder-image the UHD files.
@@ -612,6 +616,8 @@ index 0000000000..5e4bdbdeb1
 +        /usr/local/lib/libldpc*.so \
 +        /usr/local/lib/libtelnetsrv.so \
 +        /usr/local/lib/libtelnetsrv_ci.so \
++        /usr/local/lib/libnrscope.so \
++        /usr/local/lib/libuescope.so \
 +        /usr/local/lib/libuhd.so.4.4.0
 +
 +WORKDIR /opt/oai-gnb
@@ -627,10 +633,10 @@ index 0000000000..5e4bdbdeb1
 +CMD ["/opt/oai-gnb/bin/nr-softmodem", "-O", "/opt/oai-gnb/etc/gnb.conf"]
 diff --git a/docker/Dockerfile.gNB.ubuntu22.aarch64 b/docker/Dockerfile.gNB.ubuntu22.aarch64
 new file mode 100644
-index 0000000000..7e8ae638aa
+index 0000000000..08c1d0f0fa
 --- /dev/null
 +++ b/docker/Dockerfile.gNB.ubuntu22.aarch64
-@@ -0,0 +1,133 @@
+@@ -0,0 +1,138 @@
 +#/*
 +# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
 +# * contributor license agreements.  See the NOTICE file distributed with
@@ -686,6 +692,7 @@ index 0000000000..7e8ae638aa
 +        tzdata \
 +        libblas3 \
 +        libconfig9 \
++	    libforms2 \
 +        openssl \
 +        net-tools \
 +        iperf \
@@ -727,6 +734,8 @@ index 0000000000..7e8ae638aa
 +    /oai-ran/cmake_targets/ran_build/build/libldpc*.so \
 +    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv.so \
 +    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv_ci.so \
++    /oai-ran/cmake_targets/ran_build/build/libnrscope.so \
++    /oai-ran/cmake_targets/ran_build/build/libuescope.so \
 +    /usr/local/lib/
 +
 +# Now we are copying from builder-image the UHD files.
@@ -751,6 +760,8 @@ index 0000000000..7e8ae638aa
 +        /usr/local/lib/libldpc*.so \
 +        /usr/local/lib/libtelnetsrv.so \
 +        /usr/local/lib/libtelnetsrv_ci.so \
++        /usr/local/lib/libnrscope.so \
++        /usr/local/lib/libuescope.so \
 +        /usr/local/lib/libuhd.so.4.4.0
 +
 +WORKDIR /opt/oai-gnb
@@ -766,10 +777,10 @@ index 0000000000..7e8ae638aa
 +CMD ["/opt/oai-gnb/bin/nr-softmodem", "-O", "/opt/oai-gnb/etc/gnb.conf"]
 diff --git a/docker/Dockerfile.nrUE.cuda.aarch64 b/docker/Dockerfile.nrUE.cuda.aarch64
 new file mode 100644
-index 0000000000..d3821fd22d
+index 0000000000..6b8767083c
 --- /dev/null
 +++ b/docker/Dockerfile.nrUE.cuda.aarch64
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,136 @@
 +#/*
 +# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
 +# * contributor license agreements.  See the NOTICE file distributed with
@@ -826,9 +837,11 @@ index 0000000000..d3821fd22d
 +        liblapacke \
 +        libblas3 \
 +        libconfig9 \
++	    libforms2 \
 +        openssl \
 +        net-tools \
 +        gdb \
++	gdbserver \
 +        python3 \
 +        python3-six \
 +        python3-requests \
@@ -869,6 +882,8 @@ index 0000000000..d3821fd22d
 +    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv.so \
 +    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv_ciUE.so \
 +    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv_5Gue.so \
++    /oai-ran/cmake_targets/ran_build/build/libnrscope.so \
++    /oai-ran/cmake_targets/ran_build/build/libuescope.so \
 +    /usr/local/lib/
 +
 +# Now we are copying from builder-image the UHD files.
@@ -894,6 +909,8 @@ index 0000000000..d3821fd22d
 +        /usr/local/lib/libtelnetsrv.so \
 +        /usr/local/lib/libtelnetsrv_ciUE.so \
 +        /usr/local/lib/libtelnetsrv_5Gue.so \
++        /usr/local/lib/libnrscope.so \
++        /usr/local/lib/libuescope.so \
 +        /usr/local/lib/libuhd.so.4.4.0
 +
 +WORKDIR /opt/oai-nr-ue
@@ -902,10 +919,10 @@ index 0000000000..d3821fd22d
 +ENTRYPOINT ["/tini", "-v", "--", "/opt/oai-nr-ue/bin/entrypoint.sh"]
 diff --git a/docker/Dockerfile.nrUE.ubuntu22.aarch64 b/docker/Dockerfile.nrUE.ubuntu22.aarch64
 new file mode 100644
-index 0000000000..eb19f9c93b
+index 0000000000..de169058af
 --- /dev/null
 +++ b/docker/Dockerfile.nrUE.ubuntu22.aarch64
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,132 @@
 +#/*
 +# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
 +# * contributor license agreements.  See the NOTICE file distributed with
@@ -962,6 +979,7 @@ index 0000000000..eb19f9c93b
 +        liblapacke \
 +        libblas3 \
 +        libconfig9 \
++	    libforms2 \
 +        openssl \
 +        net-tools \
 +        gdb \
@@ -1005,6 +1023,8 @@ index 0000000000..eb19f9c93b
 +    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv.so \
 +    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv_ciUE.so \
 +    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv_5Gue.so \
++    /oai-ran/cmake_targets/ran_build/build/libnrscope.so \
++    /oai-ran/cmake_targets/ran_build/build/libuescope.so \
 +    /usr/local/lib/
 +
 +# Now we are copying from builder-image the UHD files.
@@ -1027,6 +1047,8 @@ index 0000000000..eb19f9c93b
 +        /usr/local/lib/libtelnetsrv.so \
 +        /usr/local/lib/libtelnetsrv_ciUE.so \
 +        /usr/local/lib/libtelnetsrv_5Gue.so \
++        /usr/local/lib/libnrscope.so \
++        /usr/local/lib/libuescope.so \
 +        /usr/local/lib/libuhd.so.4.4.0
 +
 +WORKDIR /opt/oai-nr-ue

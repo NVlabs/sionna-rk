@@ -6,7 +6,7 @@
 
 # functions
 usage() {
-    echo "Usage: $0 [-h|--help] [--tag <tagname>] <oai-cn5g_dir>"
+    echo "Usage: $0 [-h|--help] [--tag <tagname>] [-d|--debug] <oai-cn5g_dir>"
     exit 1
 }
 
@@ -23,6 +23,7 @@ check_docker_group() {
 # Default values
 path="$(pwd)"
 tag="v2.0.1"
+debug_opts=""
 
 check_docker_group
 
@@ -44,7 +45,11 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             usage
             ;;
-        *)
+	-d|--debug)
+	    debug_opts="--progress plain"
+	    shift
+	    ;;
+	*)
             path="$1"
             shift
             ;;
@@ -63,6 +68,7 @@ fi
 # Use the parsed values
 echo "Path: ${oai_path}"
 echo "Tag: ${tag}"
+echo "Debug options: ${debug_opts}"
 
 # switch to the OAI path
 pushd "$oai_path"
@@ -71,23 +77,26 @@ pushd "$oai_path"
 
 echo "Building OAI 5G Core network docker images...."
 echo "AMF"
-docker build --target oai-amf --tag oai-amf:${tag} --file component/oai-amf/docker/Dockerfile.amf.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-amf
+docker build ${debug_opts} --target oai-amf --tag oai-amf:${tag} --file component/oai-amf/docker/Dockerfile.amf.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-amf
 echo "SMF"
-docker build --target oai-smf --tag oai-smf:${tag} --file component/oai-smf/docker/Dockerfile.smf.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-smf
+docker build ${debug_opts} --target oai-smf --tag oai-smf:${tag} --file component/oai-smf/docker/Dockerfile.smf.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-smf
 echo "NRF"
-docker build --target oai-nrf --tag oai-nrf:${tag} --file component/oai-nrf/docker/Dockerfile.nrf.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-nrf
+docker build ${debug_opts} --target oai-nrf --tag oai-nrf:${tag} --file component/oai-nrf/docker/Dockerfile.nrf.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-nrf
 echo "AUSF"
-docker build --target oai-ausf --tag oai-ausf:${tag} --file component/oai-ausf/docker/Dockerfile.ausf.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-ausf
+docker build ${debug_opts} --target oai-ausf --tag oai-ausf:${tag} --file component/oai-ausf/docker/Dockerfile.ausf.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-ausf
 echo "UDM"
-docker build --target oai-udm --tag oai-udm:${tag} --file component/oai-udm/docker/Dockerfile.udm.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-udm
+docker build ${debug_opts} --target oai-udm --tag oai-udm:${tag} --file component/oai-udm/docker/Dockerfile.udm.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-udm
 echo "UDR"
-docker build --target oai-udr --tag oai-udr:${tag} --file component/oai-udr/docker/Dockerfile.udr.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-udr
+docker build ${debug_opts} --target oai-udr --tag oai-udr:${tag} --file component/oai-udr/docker/Dockerfile.udr.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-udr
 echo "NSSF"
-docker build --target oai-nssf --tag oai-nssf:${tag} --file component/oai-nssf/docker/Dockerfile.nssf.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-nssf
+docker build ${debug_opts} --target oai-nssf --tag oai-nssf:${tag} --file component/oai-nssf/docker/Dockerfile.nssf.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-nssf
 echo "UPF"
-docker build --target oai-upf --tag oai-upf:${tag} --file component/oai-upf/docker/Dockerfile.upf.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-upf
+docker build ${debug_opts} --target oai-upf --tag oai-upf:${tag} --file component/oai-upf/docker/Dockerfile.upf.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-upf
+echo "LMF"
+docker build ${debug_opts} --target oai-lmf --tag oai-lmf:${tag} --file component/oai-lmf/docker/Dockerfile.lmf.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-lmf
+e
 echo "Traffic Generator"
 cd ci-scripts
-docker build --target trf-gen-cn5g --tag trf-gen-cn5g:latest --file Dockerfile.traffic.generator.ubuntu .
+docker build ${debug_opts} --target trf-gen-cn5g --tag trf-gen-cn5g:latest --file Dockerfile.traffic.generator.ubuntu .
 
 popd

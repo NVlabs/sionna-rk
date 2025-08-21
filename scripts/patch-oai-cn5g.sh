@@ -68,21 +68,6 @@ if [ ! -d ${dest_dir}/component/oai-upf/src ]; then
     exit 1
 fi
 
-echo "Do specific fixes for UPF..."
-pushd ${dest_dir}
-
-echo "create build/ext directory if needed."
-mkdir -p ${dest_dir}/component/oai-upf/build/ext && pushd $_
-echo "download linux kernel 5.15 source..."
-wget https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-5.15.tar.gz
-popd
-echo "rollback to specific commit versions..."
-cd component/oai-upf
-git checkout 93cab8f
-cd src/common-src
-git checkout 588f79a
-popd
-
 echo "Applying changes from ${source_dir} into ${dest_dir}..."
 if [ -f "$patch_file" ]; then
     pushd ${dest_dir}

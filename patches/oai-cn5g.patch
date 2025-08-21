@@ -1,7 +1,3 @@
-#
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
 diff --git a/ci-scripts/Dockerfile.traffic.generator.ubuntu b/ci-scripts/Dockerfile.traffic.generator.ubuntu
 index 61e5d98..d45efc6 100644
 --- a/ci-scripts/Dockerfile.traffic.generator.ubuntu
@@ -9,44 +5,51 @@ index 61e5d98..d45efc6 100644
 @@ -51,6 +51,9 @@ RUN apt-get update && \
        iperf3 \
    && rm -rf /var/lib/apt/lists/*
-
+ 
 +# needed to ensure MASQUERADE chain is available
 +RUN update-alternatives --set iptables /usr/sbin/iptables-legacy
 +
  WORKDIR /tmp
-
+ 
  COPY trfgen_entrypoint.sh .
 Submodule component/oai-udr contains modified content
 diff --git a/component/oai-udr/docker/Dockerfile.udr.ubuntu b/component/oai-udr/docker/Dockerfile.udr.ubuntu
-index f908766..9050526 100644
+index 2bb792d..8ea66cb 100644
 --- a/component/oai-udr/docker/Dockerfile.udr.ubuntu
 +++ b/component/oai-udr/docker/Dockerfile.udr.ubuntu
-@@ -138,7 +138,7 @@ COPY --from=oai-udr-builder \
+@@ -139,7 +139,7 @@ COPY --from=oai-udr-builder \
      /usr/local/lib/libbsoncxx.so._noabi \
      /usr/local/lib/libmongoc-1.0.so.0 \
      /usr/local/lib/libbson-1.0.so.0 \
 -    /lib/x86_64-linux-gnu/libsnappy.so.1 \
 +    /lib/aarch64-linux-gnu/libsnappy.so.1 \
      /usr/local/lib/
-
+ 
  RUN ldconfig && \
 Submodule component/oai-upf contains modified content
 diff --git a/component/oai-upf/build/scripts/build_helper.upf b/component/oai-upf/build/scripts/build_helper.upf
-index 8e1db99..7038e4c 100644
+index 0bda001..85a60b2 100644
 --- a/component/oai-upf/build/scripts/build_helper.upf
 +++ b/component/oai-upf/build/scripts/build_helper.upf
-@@ -148,7 +148,8 @@ install_bpftool_from_git() {
-     fi
-
+@@ -217,7 +217,7 @@ install_bpftool_from_git() {
+     git clone --branch v7.3.0 --recurse-submodules $GIT_URL
+ 
      if [[ $OS_DISTRO == "ubuntu" ]]; then
 -      $SUDO $INSTALLER install -y wget gcc-multilib
-+      #$SUDO $INSTALLER install -y wget gcc-multilib
 +      $SUDO $INSTALLER install -y wget
      elif [[ "$OS_BASEDISTRO" == "fedora" ]]; then
        $SUDO $INSTALLER install -y wget
      fi
+@@ -277,7 +277,6 @@ check_install_upf_deps() {
+       automake \
+       build-essential \
+       $CMAKE \
+-      gcc-multilib \
+       git"
+   elif [[ "$OS_BASEDISTRO" == "fedora" ]]; then
+     PACKAGE_LIST="\
 diff --git a/component/oai-upf/build/scripts/build_upf b/component/oai-upf/build/scripts/build_upf
-index daa3751..fc52b05 100755
+index 81853dd..6aed5d7 100755
 --- a/component/oai-upf/build/scripts/build_upf
 +++ b/component/oai-upf/build/scripts/build_upf
 @@ -215,6 +215,16 @@ function main()
@@ -55,47 +58,31 @@ index daa3751..fc52b05 100755
    ##############################################################################
 +
 +  # Added by RDF 2024-04-04.  The following is needed to build on aarch64.
-+    if [ -d /usr/include/aarch64-linux-gnu ]; then
-+	echo "Linking include dirs for aarch64"
-+	$SUDO ln -s /usr/include/aarch64-linux-gnu/asm /usr/include/asm
-+	$SUDO ln -s /usr/include/aarch64-linux-gnu/bits /usr/include/bits
-+	$SUDO ln -s /usr/include/aarch64-linux-gnu/gnu /usr/include/gnu
-+	$SUDO cp -s /usr/include/aarch64-linux-gnu/sys/* /usr/include/sys/.
-+    fi
++  if [ -d /usr/include/aarch64-linux-gnu ]; then
++    echo "Linking include dirs for aarch64"
++    $SUDO ln -s /usr/include/aarch64-linux-gnu/asm /usr/include/asm
++    $SUDO ln -s /usr/include/aarch64-linux-gnu/bits /usr/include/bits
++    $SUDO ln -s /usr/include/aarch64-linux-gnu/gnu /usr/include/gnu
++    $SUDO cp -s /usr/include/aarch64-linux-gnu/sys/* /usr/include/sys/.
++  fi
 +
    cd $OPENAIRCN_DIR/build/upf
    if [ ! -d ./build ]; then
      mkdir -m 777 -p -v build
 diff --git a/component/oai-upf/docker/Dockerfile.upf.ubuntu b/component/oai-upf/docker/Dockerfile.upf.ubuntu
-index 58e848c..25382e1 100644
+index a23f2e3..144b2e4 100644
 --- a/component/oai-upf/docker/Dockerfile.upf.ubuntu
 +++ b/component/oai-upf/docker/Dockerfile.upf.ubuntu
-@@ -52,6 +52,7 @@ COPY ./build/scripts /openair-upf/build/scripts/
- COPY ./build/common-build /openair-upf/build/common-build
- COPY ./build/upf/CMakeLists.txt /openair-upf/build/upf/CMakeLists.txt
- COPY ./build/cmake_modules /openair-upf/cmake_modules/
-+COPY ./build/ext /openair-upf/build/ext/
-
- # Installing all the needed libraries/packages to build and run UPF
- WORKDIR /openair-upf/build/scripts
-@@ -108,6 +109,9 @@ RUN apt-get update && \
-       libboost-thread1.7?.0 \
-   && rm -rf /var/lib/apt/lists/*
-
-+# needed to ensure MASQUERADE chain is available
-+RUN update-alternatives --set iptables /usr/sbin/iptables-legacy
-+
- # Copying executable and generated libraries
- WORKDIR /openair-upf/bin
- COPY --from=oai-upf-builder \
-@@ -122,8 +126,8 @@ COPY --from=oai-upf-builder \
-     /usr/local/lib/libyaml-cpp.so.0.? \
+@@ -126,9 +126,9 @@ COPY --from=oai-upf-builder \
+     /usr/local/lib/libcpr.so.1 \    
  # Ubuntu 20 --> libbfd-2.34
  # Ubuntu 22 --> libbfd-2.38
 -    /usr/lib/x86_64-linux-gnu/libbfd-2.3?-system.so \
 -    /usr/lib/x86_64-linux-gnu/libopcodes-2.3?-system.so \
+-    /openair-upf/build/ext/libbpf/src/libbpf.so.1 \
 +    /usr/lib/aarch64-linux-gnu/libbfd-2.3?-system.so \
 +    /usr/lib/aarch64-linux-gnu/libopcodes-2.3?-system.so \
-     /openair-upf/build/ext/libbpf/src/libbpf.so.0 \
++    /openair-upf/build/ext/libbpf/src/libbpf.so.? \
      # /openair-upf/build/upf/build/upf_app/utils/libupfutils.so \
      ./
+ 

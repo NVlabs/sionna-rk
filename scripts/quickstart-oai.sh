@@ -10,7 +10,7 @@ check-license
 
 # functions
 function usage() {
-    echo "Usage: $0 [-h|--help] [--clean] [--no-tutorials] [--no-build] [--tag <tagname>] [--arch (x86|arm64|cuda)] --source <kit-rootdir> --dest <openairinterface5g_dir>"
+    echo "Usage: $0 [-h|--help] [--clean] [--debug] [--no-tutorials] [--no-build] [--tag <tagname>] [--arch (x86|arm64|cuda)] --source <kit-rootdir> --dest <openairinterface5g_dir>"
     exit 1
 }
 
@@ -32,6 +32,7 @@ tag="latest"
 clean_dest=0
 no_build=0
 no_tutorials=0
+debug=0
 
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
@@ -56,6 +57,7 @@ while [[ $# -gt 0 ]]; do
         --clean) clean_dest=1 ;;
         --no-build) no_build=1 ;;
         --no-tutorials) no_tutorials=1 ;;
+        --debug) debug=1 ;;
         *) usage; exit 1 ;;
     esac
     shift
@@ -121,5 +123,9 @@ fi
 
 if [ "$no_build" = "0" ]; then
     echo "Build OAI images..."
-    "${source_dir}/scripts/build-oai-images.sh" --tag "$tag" --arch "$arch" "$dest_dir"
+    debug_opts=""
+    if [ "$debug" = "1" ]; then
+        debug_opts="--debug"
+    fi
+    "${source_dir}/scripts/build-oai-images.sh" $debug_opts --tag "$tag" --arch "$arch" "$dest_dir"
 fi

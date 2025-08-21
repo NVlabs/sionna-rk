@@ -10,7 +10,7 @@ check-license
 
 # functions
 function usage() {
-    echo "Usage: $0 [-h|--help] [--clean] [--no-build] [--tag <tagname>] [--arch (x86|arm64)] --source <kit-rootdir> --dest <oai-cn5g-fed_dir>"
+    echo "Usage: $0 [-h|--help] [--clean] [--debug] [--branch <branchname>] [--no-build] [--tag <tagname>] [--arch (x86|arm64)] --source <kit-rootdir> --dest <oai-cn5g-fed_dir>"
     exit 1
 }
 
@@ -28,10 +28,11 @@ default_dir=$(realpath $(dirname "${BASH_SOURCE[0]}")/../)
 source_dir=${source_dir:-"$default_dir"}
 dest_dir=${dest_dir:-$(realpath -sm "./ext/oai-cn5g-fed")}
 arch=${arch:-$(uname -m)}
-tag="v2.0.1"
+branch=${branch:-"v2.1.0-1.2"}
+tag=${tag:-"$branch"}
 clean_dest=0
 no_build=0
-
+debug=0
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -51,9 +52,11 @@ while [[ $# -gt 0 ]]; do
         -h|--help) usage ;;
         --source) source_dir="$2"; shift ;;
         --dest) dest_dir="$2"; shift ;;
+        --branch) branch="$2"; tag="$2"; shift ;;   # order is important here. must be before --tag.
         --tag) tag="$2"; shift ;;
         --clean) clean_dest=1 ;;
         --no-build) no_build=1 ;;
+        --debug) debug=1 ;;
         *) usage; exit 1 ;;
     esac
     shift
@@ -100,22 +103,23 @@ fi
 
 # checkout oai-cn5g-fed
 echo "Fetch OAI 5G Core Network..."
-git clone --branch v2.0.1 https://gitlab.eurecom.fr/oai/cn5g/oai-cn5g-fed.git "${dest_dir}"
+git clone --branch "$branch" https://gitlab.eurecom.fr/oai/cn5g/oai-cn5g-fed.git "${dest_dir}"
 
 echo "Sync Components from OAI-CN5G..."
 pushd "$dest_dir"
 ./scripts/syncComponents.sh \
-    --nrf-branch "v2.0.1" \
-    --amf-branch "v2.0.1" \
-    --smf-branch "v2.0.1" \
-    --upf-branch "v2.0.1" \
-    --ausf-branch "v2.0.1" \
-    --udm-branch "v2.0.1" \
-    --udr-branch "v2.0.1" \
-    --upf-vpp-branch "v2.0.1" \
-    --nssf-branch "v2.0.1" \
-    --nef-branch "v2.0.1" \
-    --pcf-branch "v2.0.1"
+    --nrf-branch "$branch" \
+    --amf-branch "$branch" \
+    --smf-branch "$branch" \
+    --upf-branch "$branch" \
+    --ausf-branch "$branch" \
+    --udm-branch "$branch" \
+    --udr-branch "$branch" \
+    --upf-vpp-branch "$branch" \
+    --nssf-branch "$branch" \
+    --nef-branch "$branch" \
+    --pcf-branch "$branch" \
+    --lmf-branch "$branch"
 popd
 echo "Completed Sync."
 
@@ -129,7 +133,11 @@ fi
 
 if [ "$no_build" = "0" ]; then
     echo "Build OAI 5G Core Network images..."
-    "${source_dir}/scripts/build-cn5g-images.sh" --tag "$tag" "$dest_dir"
+    debug_opts=""
+    if [ "$debug" = "1" ]; then
+        debug_opts="-d"
+    fi
+    "${source_dir}/scripts/build-cn5g-images.sh" $debug_opts --tag "$tag" "$dest_dir"
 else
     echo "Skipping build of docker images."
 fi

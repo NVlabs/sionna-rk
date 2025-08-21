@@ -30,6 +30,22 @@ sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin d
 # add user to docker group
 sudo usermod -aG docker $USER  # Log out and back in after this
 
+# newer versions of docker require an extra daemon configuration
+if [ -f /etc/systemd/system/docker.service.d/override.conf ]; then
+    echo "Docker override '/etc/systemd/system/docker.service.d/override.conf' already exists, ensure the following is added, then reload the daemon:"
+    echo "[Service]"
+    echo "Environment=\"DOCKER_INSECURE_NO_IPTABLES_RAW=1\""
+else
+  sudo mkdir -p /etc/systemd/system/docker.service.d
+  sudo tee /etc/systemd/system/docker.service.d/override.conf <<EOF
+[Service]
+Environment="DOCKER_INSECURE_NO_IPTABLES_RAW=1"
+EOF
+  echo "Reloading docker daemon..."
+  sudo systemctl daemon-reload
+  sudo systemctl restart docker
+fi
+
 # install tensorrt
 sudo apt install -y cuda-toolkit nvidia-l4t-dla-compiler tensorrt
 

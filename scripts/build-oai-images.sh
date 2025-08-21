@@ -6,44 +6,44 @@
 
 # functions
 usage() {
-    echo "Usage: $0 [-h|--help] [--tag <tagname>] [--arch (x86|arm64|cuda)] <openairinterface5g_dir>"
+    echo "Usage: $0 [-h|--help] [--tag <tagname>] [--arch (x86|arm64|cuda)] [-d|--debug] <openairinterface5g_dir>"
     exit 1
 }
 
 build_cuda_images() {
     echo "Building CUDA images"
     echo "CUDA base image"
-    docker build --target ran-base-cuda --tag ran-base-cuda:${tag} --file docker/Dockerfile.base.cuda.aarch64 .
+    docker build $debug_opts --target ran-base-cuda --tag ran-base-cuda:${tag} --file docker/Dockerfile.base.cuda.aarch64 .
     echo "CUDA build image"
-    docker build --target ran-build-cuda --tag ran-build-cuda:${tag} --file docker/Dockerfile.build.cuda.aarch64 .
+    docker build $debug_opts --target ran-build-cuda --tag ran-build-cuda:${tag} --file docker/Dockerfile.build.cuda.aarch64 .
     echo "CUDA gNB"
-    docker build --target oai-gnb-cuda --tag oai-gnb-cuda:${tag} --file docker/Dockerfile.gNB.cuda.aarch64 .
+    docker build $debug_opts --target oai-gnb-cuda --tag oai-gnb-cuda:${tag} --file docker/Dockerfile.gNB.cuda.aarch64 .
     echo "build UE (cuda version)"
-    docker build --target oai-nr-ue-cuda --tag oai-nr-ue-cuda:${tag} --file docker/Dockerfile.nrUE.cuda.aarch64 .
+    docker build $debug_opts --target oai-nr-ue-cuda --tag oai-nr-ue-cuda:${tag} --file docker/Dockerfile.nrUE.cuda.aarch64 .
 }
 
 build_arm_images() {
     echo "Building images for AARCH64"
     echo "base image"
-    docker build --target ran-base --tag ran-base:${tag} --file docker/Dockerfile.base.ubuntu22.aarch64 .
+    docker build $debug_opts --target ran-base --tag ran-base:${tag} --file docker/Dockerfile.base.ubuntu22.aarch64 .
     echo "build image"
-    docker build --target ran-build --tag ran-build:${tag} --file docker/Dockerfile.build.ubuntu22.aarch64 .
+    docker build $debug_opts --target ran-build --tag ran-build:${tag} --file docker/Dockerfile.build.ubuntu22.aarch64 .
     echo "build gNB"
-    docker build --target oai-gnb --tag oai-gnb:${tag} --file docker/Dockerfile.gNB.ubuntu22.aarch64 .
+    docker build $debug_opts --target oai-gnb --tag oai-gnb:${tag} --file docker/Dockerfile.gNB.ubuntu22.aarch64 .
     echo "build UE"
-    docker build --target oai-nr-ue --tag oai-nr-ue:${tag} --file docker/Dockerfile.nrUE.ubuntu22.aarch64 .
+    docker build $debug_opts --target oai-nr-ue --tag oai-nr-ue:${tag} --file docker/Dockerfile.nrUE.ubuntu22.aarch64 .
 }
 
 build_x86_images() {
     echo "Building images for x86"
     echo "base image"
-    docker build --target ran-base --tag ran-base:${tag} --file docker/Dockerfile.base.ubuntu22 .
+    docker build $debug_opts --target ran-base --tag ran-base:${tag} --file docker/Dockerfile.base.ubuntu22 .
     echo "build image"
-    docker build --target ran-build --tag ran-build:${tag} --file docker/Dockerfile.build.ubuntu22 .
+    docker build $debug_opts --target ran-build --tag ran-build:${tag} --file docker/Dockerfile.build.ubuntu22 .
     echo "build gNB"
-    docker build --target oai-gnb --tag oai-gnb:${tag} --file docker/Dockerfile.gNB.ubuntu22 .
+    docker build $debug_opts --target oai-gnb --tag oai-gnb:${tag} --file docker/Dockerfile.gNB.ubuntu22 .
     echo "build UE"
-    docker build --target oai-nr-ue --tag oai-nr-ue:${tag} --file docker/Dockerfile.nrUE.ubuntu22 .
+    docker build $debug_opts --target oai-nr-ue --tag oai-nr-ue:${tag} --file docker/Dockerfile.nrUE.ubuntu22 .
 }
 
 check_docker_group() {
@@ -60,6 +60,7 @@ check_docker_group() {
 path="$(pwd)"
 tag="latest"
 arch="cuda"
+debug_opts=""
 
 check_docker_group
 
@@ -85,6 +86,10 @@ while [[ $# -gt 0 ]]; do
                     exit 1
                     ;;
             esac
+            ;;
+        -d|--debug)
+            debug_opts="--progress plain"
+            shift
             ;;
         *)
             path="$1"
