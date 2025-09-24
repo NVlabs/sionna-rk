@@ -160,7 +160,7 @@ index 06c945a..9789bec 100644
 +        entrypoint: /bin/bash -c \
 +                    "echo '200 eth1_table' >> /etc/iproute2/rt_tables;"\
 +                    "ip route del default;"\
-+                    "ip route add default via 192.168.72.129 dev eth1 table eth1_table;"\
++                    "ip route add default via 192.168.72.135 dev eth1 table eth1_table;"\
 +                    "ip rule add from 12.1.1.0/24 table eth1_table;"\
 +                    "/openair-upf/bin/oai_upf -c /openair-upf/etc/config.yaml -o"
          volumes:
