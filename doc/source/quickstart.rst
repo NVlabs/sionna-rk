@@ -238,7 +238,7 @@ You need to configure the environment using your individual configuration:
 
 .. code-block:: bash
 
-   cp config/common/.env.template config/b200_arm64/.env
+   cp configs/common/.env.template configs/b200_arm64/.env
 
 Edit `.env` file in `config/b200_arm64/` and set the following parameters:
 
