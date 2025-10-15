@@ -4,6 +4,10 @@ SPDX-License-Identifier: Apache-2.0
 -->
 # Sionna Research Kit: A GPU-Accelerated Research Platform for AI-RAN
 
+> [!NOTE]
+> The NVIDIA Jetson Thor as well as the NVIDIA DGX Spark will be supported soon. 
+
+
 The NVIDIA Sionna&trade; Research Kit, powered by the [NVIDIA Jetson Platform](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/), is the pioneering solution that integrates in-line AI/ML accelerated computing with the adaptability of a software-defined Radio Access Network (RAN). Leveraging [OpenAirInterface](https://openairinterface.org), it guarantees [O-RAN](https://www.o-ran.org/)-compliant interfaces, providing extensive research opportunities—from 5G NR and [O-RAN](https://www.o-ran.org/) over real-world data acquisition to the deployment of cutting-edge [AI-RAN](https://ai-ran.org/) algorithms for 6G.
 
 Created by the team behind [Sionna](https://github.com/NVlabs/sionna), the Sionna Research Kit features textbook-quality tutorials. In just an afternoon, you will connect commercial 5G equipment to a network using your own customizable receiver algorithms. Conducting AI-RAN experiments, whether cabled or over-the-air, has never been simpler and more cost-effective.
