@@ -1,5 +1,0 @@
-common
-b200_arm64
-b200_x86
-rfsim_arm64
-rfsim_x86

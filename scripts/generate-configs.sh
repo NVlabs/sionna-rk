@@ -6,7 +6,7 @@
 
 # File and configurations
 # Common files go into config-dir/common
-# Compose files fo into config-dir/<config-name>
+# Compose files go into config-dir/<config-name>
 # config_list is a list of configuration directories to initialize.
 # patch file names are also picked from the config_list
 
@@ -42,7 +42,7 @@ function init_nested_repo() {
 default_dir=$(realpath $(dirname "${BASH_SOURCE[0]}")/../)
 rk_dir=${rk_dir:-"$default_dir"}
 oai_dir=${oai_dir:-$(realpath -sm "./ext/openairinterface5g")}
-dest_dir=${dest_dir:-$(realpath -sm "${rk_dir}/configs")}
+dest_dir=${dest_dir:-$(realpath -sm "${rk_dir}/config")}
 clean_dest=0
 patching=1
 init=0
@@ -83,8 +83,8 @@ if [ "$clean_dest" = "1" ] && [ -d "$dest_dir" ]; then
 fi
 
 # check if config files exist
-config_list_filename="${rk_dir}/patches/configs/config-list.txt"
-config_mappings_filename="${rk_dir}/patches/configs/config-mappings.txt"
+config_list_filename="${rk_dir}/patches/config/config-list.txt"
+config_mappings_filename="${rk_dir}/patches/config/config-mappings.txt"
 
 if [ ! -f "$config_list_filename" ] || [ ! -f "$config_mappings_filename" ]; then
     echo "Config Files missing. Check:\n ${config_list_filename}\n ${config_mappings_filename}"
@@ -93,8 +93,8 @@ if [ ! -f "$config_list_filename" ] || [ ! -f "$config_mappings_filename" ]; the
 fi
 
 # Read configs and mappings from disk
-config_list_tmp=$(cat "${rk_dir}/patches/configs/config-list.txt")
-config_mappings_tmp=$(cat "${rk_dir}/patches/configs/config-mappings.txt")
+config_list_tmp=$(cat "${rk_dir}/patches/config/config-list.txt")
+config_mappings_tmp=$(cat "${rk_dir}/patches/config/config-mappings.txt")
 
 IFS=$'\n' readarray -t config_list <<< "$config_list_tmp"
 IFS=$'\n' readarray -t config_mappings <<< "$config_mappings_tmp"
@@ -144,7 +144,7 @@ for cfg in "${config_list[@]}"; do
     if [ "$patching" = "1" ]; then
         echo "Patching: ${cfg}"
         pushd "${dest_dir}/${cfg}"
-        patch -p0 < "${rk_dir}/patches/configs/config.${cfg}.patch"
+        patch -p0 < "${rk_dir}/patches/config/config.${cfg}.patch"
         popd
     fi
 

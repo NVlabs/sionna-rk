@@ -1,91 +1,88 @@
 #!/bin/bash
-#
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-#
 
-echo "This script requires elevated privileges."
-echo "It will ask for password on the first call to sudo."
+# functions
+function usage() {
+    echo "Usage: $0 [-h|--help] [--force-platform <platform>] [--verbose] [--dry-run]"
+    echo "Platforms: agx-orin, agx-thor, orin-nano, dgx-spark"
+    exit 1
+}
 
-# install git, docker and a few build dependencies
-sudo apt update
-sudo apt dist-upgrade -y
-sudo apt install -y apt-utils coreutils git-core git cmake build-essential bc libssl-dev python3 python3-pip ninja-build ca-certificates curl pandoc
+function execute() {
+    # Always show the command
+    if [ "$VERBOSE" == "1" ]; then
+        echo "Executing: $@"
+    fi
 
-# Add Docker's official GPG key:
-sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
+    if [ "$DRYRUN" == "1" ]; then
+        # only print the command
+        echo "[DRY-RUN] $@"
+    else
+        # actually execute the command
+        eval "$@"
+        ret_val=$?
+        if [ $ret_val -ne 0 ]; then
+            echo "Command failed with exit code $ret_val"
+            exit $ret_val
+        fi
+    fi
+}
 
-# Add the repository to Apt sources:
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+# default values
+source_dir=$(realpath $(dirname "${BASH_SOURCE[0]}")/../)
+platform="unknown"
+family="unknown"
+model="unknown"
+VERBOSE=0
+DRYRUN=0
 
-# install docker and its plugins
-sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin nvidia-container
-
-# add user to docker group
-sudo usermod -aG docker $USER  # Log out and back in after this
-
-# newer versions of docker require an extra daemon configuration
-if [ -f /etc/systemd/system/docker.service.d/override.conf ]; then
-    echo "Docker override '/etc/systemd/system/docker.service.d/override.conf' already exists, ensure the following is added, then reload the daemon:"
-    echo "[Service]"
-    echo "Environment=\"DOCKER_INSECURE_NO_IPTABLES_RAW=1\""
-else
-  sudo mkdir -p /etc/systemd/system/docker.service.d
-  sudo tee /etc/systemd/system/docker.service.d/override.conf <<EOF
-[Service]
-Environment="DOCKER_INSECURE_NO_IPTABLES_RAW=1"
-EOF
-  echo "Reloading docker daemon..."
-  sudo systemctl daemon-reload
-  sudo systemctl restart docker
+if [ -f "/sys/devices/virtual/dmi/id/product_family" ]; then
+    family=$(cat /sys/devices/virtual/dmi/id/product_family)
 fi
 
-# install tensorrt
-sudo apt install -y cuda-toolkit nvidia-l4t-dla-compiler tensorrt
+if [ -f "/sys/devices/virtual/dmi/id/product_name" ]; then
+    model=$(cat /sys/devices/virtual/dmi/id/product_name)
+fi
 
-# add trtexec alias
-touch ~/.bash_aliases
-echo 'alias trtexec=/usr/src/tensorrt/bin/trtexec' >> ~/.bash_aliases
+# Parse command-line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help) usage ;;
+        --force-platform) platform="$2" ; shift 2 ;;
+        --verbose) VERBOSE=1 ; shift ;;
+        --dry-run) DRYRUN=1 ; shift ;;
+        *) shift ;; # ignore other arguments
+    esac
+done
 
-# install python utility
-sudo python3 -m pip install -U jetson-stats
+echo "Platform: $platform"
+echo "Model: $model"
+echo "Family: $family"
 
-# install tensorflow for sionna-no-rt
-python3 -m pip install --user --extra-index-url https://developer.download.nvidia.com/compute/redist/jp/v60 tensorflow==2.15.0+nv24.05
+# select the script according to platform
+if [ "$platform" == "agx-orin" ] || ([ "$model" == "NVIDIA Jetson AGX Orin Developer Kit" ] && [ "$platform" == "unknown" ]); then
+    echo "Configuring system as 'Jetson AGX Orin Developer Kit'"
+    execute "${source_dir}/scripts/configure-system.agx-orin.sh"
+    exit 0
+fi
 
-# install python requirements for tutorials
-base_dir=$(realpath $(dirname "${BASH_SOURCE[0]}")/../)
-python3 -m pip install --user -r "${base_dir}/requirements.txt"
+if [ "$platform" == "agx-thor" ] || ([ "$model" == "NVIDIA Jetson AGX Thor Developer Kit" ] && [ "$platform" == "unknown" ]); then
+    echo "Configuring system as 'Jetson AGX Thor Developer Kit'"
+    execute "${source_dir}/scripts/configure-system.agx-thor.sh"
+    exit 0
+fi
 
-# install USRP drivers
-${base_dir}/scripts/install-usrp.sh
+if [ "$platform" == "orin-nano" ] || ([ "$model" == "NVIDIA Jetson Orin Nano Engineering Reference Developer Kit Super" ] && [ "$platform" == "unknown" ]); then
+    echo "Configuring system as 'Jetson Orin Nano Super Developer Kit'"
+    execute "${source_dir}/scripts/configure-system.orin-nano.sh"
+    exit 0
+fi
 
-# Query the current power mode
-sudo nvpmodel -q
+if [ "$platform" == "dgx-spark" ] || ([ "$family" == "DGX Spark" ] && [ "$platform" == "unknown" ]); then
+    echo "Configuring system as 'DGX Spark'"
+    execute "${source_dir}/scripts/configure-system.dgx-spark.sh"
+    exit 0
+fi
 
-# Set power mode to remove limits
-sudo nvpmodel -m 0
-
-# Change power mode permanently
-sudo sed -i 's|< PM_CONFIG DEFAULT=2 >|< PM_CONFIG DEFAULT=0 >|' /etc/nvpmodel.conf
-
-# Needs to be done for each core group individually
-# Change governor of cores 0-4
-sudo cpufreq-set -c 0 -g performance
-
-# Change governor of cores 5-8
-sudo cpufreq-set -c 5 -g performance
-
-# Change governor of cores 9-12
-sudo cpufreq-set -c 9 -g performance
-
-# set governor to performance, persist reboots
-echo 'GOVERNOR="performance"' | sudo tee /etc/default/cpufrequtils
-
-echo "User $(whoami) has been added to the 'docker' group. Log out and back in to take effect."
+echo "Unknown platform detected. Try forcing the platform with --force-platform <platform>. Exiting."
+usage
+exit 1

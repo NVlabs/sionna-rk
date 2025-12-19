@@ -87,8 +87,8 @@ source_dir=$(realpath -sm "$source_dir")
 dest_dir=$(realpath -sm "$dest_dir")
 
 # check if config files exist
-config_list_filename="${rk_dir}/patches/configs/config-list.txt"
-config_mappings_filename="${rk_dir}/patches/configs/config-mappings.txt"
+config_list_filename="${rk_dir}/patches/config/config-list.txt"
+config_mappings_filename="${rk_dir}/patches/config/config-mappings.txt"
 
 if [ ! -f "$config_list_filename" ] || [ ! -f "$config_mappings_filename" ]; then
     echo "Config Files missing. Check:\n ${config_list_filename}\n ${config_mappings_filename}"
@@ -97,9 +97,9 @@ if [ ! -f "$config_list_filename" ] || [ ! -f "$config_mappings_filename" ]; the
 fi
 
 # Read configs and mappings from disk
-config_list_tmp=$(cat "${rk_dir}/patches/configs/config-list.txt")
-config_mappings_tmp=$(cat "${rk_dir}/patches/configs/config-mappings.txt")
-config_excludes_tmp=$(cat "${rk_dir}/patches/configs/config-excludes.txt")
+config_list_tmp=$(cat "${rk_dir}/patches/config/config-list.txt")
+config_mappings_tmp=$(cat "${rk_dir}/patches/config/config-mappings.txt")
+config_excludes_tmp=$(cat "${rk_dir}/patches/config/config-excludes.txt")
 
 IFS=$'\n' readarray -t config_list <<< "$config_list_tmp"
 IFS=$'\n' readarray -t config_mappings <<< "$config_mappings_tmp"

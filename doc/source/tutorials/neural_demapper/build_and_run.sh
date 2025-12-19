@@ -1,1 +1,0 @@
-../../../../tutorials/neural_demapper/tests/build_and_run.sh

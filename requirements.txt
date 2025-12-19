@@ -4,7 +4,8 @@ matplotlib
 nanobind
 onnx
 tf2onnx
-polygraphy
-pandas
 pytest
 tensorrt
+pyzmq
+pyyaml
+

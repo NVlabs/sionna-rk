@@ -1,0 +1,23 @@
+#
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+
+name: neural_demapper
+description: Neural network-based demapper with TensorRT acceleration
+
+tests:
+  unit:
+    enabled: true
+    command: pytest tests/unit -v
+  integration:
+    enabled: true
+    command: ./tests/integration/run_integration.sh
+
+build:
+  host:
+    enabled: true
+    command: ./scripts/build-trt-plans.sh --plan ./models/neural_demapper_qam16_2.host.plan
+  container:
+    enabled: true
+    command: docker run --runtime=nvidia -v ../../plugins/:/mnt/plugins -v ../../ext/neural_demapper:/mnt/neural_demapper --rm -t ran-build-cuda:latest /mnt/plugins/neural_demapper/scripts/build-trt-plans.sh --plan /mnt/plugins/neural_demapper/models/neural_demapper_qam16_2.plan

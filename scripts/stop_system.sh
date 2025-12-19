@@ -5,23 +5,9 @@
 #
 set -e  # Stop script on any error
 
-# supress outputs from pushd and popd
-function pushd() {
-  command pushd "$@" > /dev/null
-}
-
-function popd() {
-  command popd "$@" > /dev/null
-}
-
-# defaults
-CONFIG_NAME=${1:-b200_arm64}
-configs_dir=$(realpath $(dirname "${BASH_SOURCE[0]}")/../configs)
+configs_dir=$(realpath $(dirname "${BASH_SOURCE[0]}")/../config)
 
 echo "Shutting down network"
 
-pushd ${configs_dir}/$CONFIG_NAME
-
+cd "${configs_dir}/common"
 docker compose down
-
-popd

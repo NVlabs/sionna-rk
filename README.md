@@ -2,18 +2,14 @@
 SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 -->
-# Sionna Research Kit: A GPU-Accelerated Research Platform for AI-RAN
+# Sionna Research Kit: A GPU-Accelerated Research Platform for AI-native RAN
 
-> [!NOTE]
-> The NVIDIA Jetson Thor as well as the NVIDIA DGX Spark will be supported soon. 
+The [Sionna Research Kit](https://github.com/NVlabs/sionna-rk) is an accelerated, open platform for wireless research and development. Powered by the [NVIDIA DGX Spark](https://www.nvidia.com/en-us/products/workstations/dgx-spark/) and built on [OpenAirInterface](https://openairinterface.org), it provides a software-defined 5G RAN and core network for end-to-end experimentation running in real-time.
 
-
-The NVIDIA Sionna&trade; Research Kit, powered by the [NVIDIA Jetson Platform](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/), is the pioneering solution that integrates in-line AI/ML accelerated computing with the adaptability of a software-defined Radio Access Network (RAN). Leveraging [OpenAirInterface](https://openairinterface.org), it guarantees [O-RAN](https://www.o-ran.org/)-compliant interfaces, providing extensive research opportunities—from 5G NR and [O-RAN](https://www.o-ran.org/) over real-world data acquisition to the deployment of cutting-edge [AI-RAN](https://ai-ran.org/) algorithms for 6G.
-
-Created by the team behind [Sionna](https://github.com/NVlabs/sionna), the Sionna Research Kit features textbook-quality tutorials. In just an afternoon, you will connect commercial 5G equipment to a network using your own customizable receiver algorithms. Conducting AI-RAN experiments, whether cabled or over-the-air, has never been simpler and more cost-effective.
+Created by the team behind [Sionna](https://github.com/NVlabs/sionna), it features textbook-quality tutorials and [O-RAN](https://www.o-ran.org/)-compliant interfaces. In just one afternoon, you will connect commercial 5G equipment to a network using your own customizable transceiver algorithms. Conducting [AI-RAN](https://ai-ran.org/) experiments, whether simulated, cabled, or over-the-air, has never been more accessible.
 
 The official documentation can be found [here](https://nvlabs.github.io/sionna/rk).
-You can build the documentation locally via ```make doc```. This may require to manually install `sudo apt install pandoc` and `pip install -r requirements_doc.txt`.
+You can build the documentation locally via ```make doc```. This may require manually installing `sudo apt install pandoc` and `pip install -r requirements_doc.txt`.
 
 See the [Quickstart Guide](https://nvlabs.github.io/sionna/rk/quickstart.html) to get started.
 
@@ -30,7 +26,7 @@ If you use this software, please cite it as:
     author = {Cammerer, Sebastian, and Marcus, Guillermo and Zirr, Tobias and Hoydis, Jakob and {Ait Aoudia}, Fayçal and Wiesmayr, Reinhard and Maggi, Lorenzo and Nimier-David, Merlin and Keller, Alexander},
     note = {https://nvlabs.github.io/sionna/rk/index.html},
     year = {2025},
-    version = {1.0.0}
+    version = {1.1.0}
    }
 ```
 

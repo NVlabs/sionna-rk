@@ -16,14 +16,24 @@ function popd() {
 }
 
 # defaults
-CONFIG_NAME=${1:-b200_arm64}
-configs_dir=$(realpath $(dirname "${BASH_SOURCE[0]}")/../configs)
+CONFIG_NAME=${1:-rfsim}
+configs_dir=$(realpath $(dirname "${BASH_SOURCE[0]}")/../config)
+env_file="${configs_dir}/${CONFIG_NAME}/.env"
 
-# change into config directory
-pushd ${configs_dir}/$CONFIG_NAME
+# Validate config
+if [[ ! -f "$env_file" ]]; then
+    echo "Error: .env file not found at $env_file"
+    echo "Usage: $0 [rfsim|b200]"
+    exit 1
+fi
+
+# change into common config directory
+pushd ${configs_dir}/common
+
+echo "Using config: $CONFIG_NAME (env: $env_file)"
 
 echo "Starting 5G Core network"
-docker compose up -d mysql oai-amf oai-smf oai-upf oai-ext-dn
+docker compose --env-file "$env_file" up -d mysql oai-amf oai-smf oai-upf oai-ext-dn nearRT-RIC
 
 # Function to wait until a container is healthy
 wait_for_container() {
@@ -65,10 +75,9 @@ wait_for_container "oai-upf"
 wait_for_container "oai-ext-dn"
 
 echo "All services are up and healthy!"
-#sleep 30
 
 echo "Starting gNB"
-docker compose up -d oai-gnb
+docker compose --env-file "$env_file" up -d oai-gnb
 
 wait_for_container "oai-gnb"
 
@@ -76,9 +85,12 @@ wait_for_container "oai-gnb"
 if [[ "$CONFIG_NAME" == *"rfsim"* ]]; then
     echo "gNB ready to connect"
     echo "Starting nr-ue"
-    docker compose up -d oai-nr-ue
+    docker compose --env-file "$env_file" up -d oai-nr-ue
     wait_for_container "oai-nr-ue"
 fi
+
+# Start xApp
+docker compose --env-file "$env_file" up -d monitor_xapp
 
 echo "5G network is ready to connect!"
 

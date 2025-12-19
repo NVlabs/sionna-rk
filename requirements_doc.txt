@@ -6,3 +6,4 @@ nbsphinx==0.9.5
 docutils==0.20.1
 sphinx-copybutton==0.5.2
 markupsafe==2.1.5
+pyyaml==6.0.1

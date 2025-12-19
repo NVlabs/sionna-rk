@@ -1,0 +1,11 @@
+sionna-no-rt
+numpy
+matplotlib
+nanobind
+onnx
+tf2onnx
+pytest
+#tensorrt
+pyzmq
+pyyaml
+

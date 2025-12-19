@@ -1,0 +1,74 @@
+diff --git .env .env
+new file mode 100644
+index 0000000..f1f871b
+--- /dev/null
++++ .env
+@@ -0,0 +1,68 @@
++# =============================================================================
++# Config Files
++# =============================================================================
++
++SYSTEM_CONFIG="../common/sys_config.yaml"
++GNB_CONFIG="../common/gnb.sa.band78.24prbs.conf"
++
++# =============================================================================
++# Image Tags
++# =============================================================================
++
++GNB_IMAGE=oai-gnb-cuda
++GNB_TAG=latest
++UE_IMAGE=oai-nr-ue-cuda
++UE_TAG=latest
++AMF_TAG=v2.1.10
++SMF_TAG=v2.1.10
++UPF_TAG=v2.1.10
++TRFGEN_TAG=latest
++FLEXRIC_TAG=latest
++
++# =============================================================================
++# gNB Extra Options
++# =============================================================================
++
++# note that this is platform specific
++GNB_THREAD_POOL="--thread-pool ${SRK_THREAD_POOL:-6,7,8,9,10,11}"
++
++#GNB_EXTRA_OPTIONS="--loader.ldpc.shlibversion _cuda"
++
++# --- Tutorials (activate by loading the library) ---
++# CUDA LDPC
++#GNB_EXTRA_OPTIONS="--loader.ldpc.shlibversion _cuda"
++
++# Demapper
++#GNB_EXTRA_OPTIONS="--loader.demapper.shlibversion _orig"
++#GNB_EXTRA_OPTIONS="--loader.demapper.shlibversion _capture"
++#GNB_EXTRA_OPTIONS="--loader.demapper.shlibversion _trt --MACRLCs.[0].dl_max_mcs 10 --MACRLCs.[0].ul_max_mcs 10"
++
++# Neural Receiver
++# works best with 24 PRBs
++#GNB_EXTRA_OPTIONS="--loader.receiver.shlibversion _trt --MACRLCs.[0].ul_max_mcs 10"
++
++# =============================================================================
++# UE Extra Options (soft-UE only)
++# =============================================================================
++
++UE_EXTRA_OPTIONS="-C 3309480000 -r 51 --numerology 1 --ssb 238 --thread-pool ${SRK_UE_THREAD_POOL:-3,4}"
++
++# --- PRB configs (uncomment one to replace UE_EXTRA_OPTIONS above) ---
++#UE_EXTRA_OPTIONS="-C 3604800000 -r 24 --numerology 1 --ssb 24 --thread-pool ${SRK_UE_THREAD_POOL:-3,4}"
++#UE_EXTRA_OPTIONS="-C 3309480000 -r 51 --numerology 1 --ssb 238 --thread-pool ${SRK_UE_THREAD_POOL:-3,4}"
++#UE_EXTRA_OPTIONS="-C 3319680000 -r 106 --numerology 1 --ssb 516 --thread-pool ${SRK_UE_THREAD_POOL:-3,4}"
++
++# =============================================================================
++# B200/USRP Hardware Configuration
++# =============================================================================
++
++USE_B2XX=yes
++# USRP_SERIAL=<your_gnb_serial>
++# USRP_SERIAL_UE=<your_ue_serial>
++
++# =============================================================================
++# RF Options
++# =============================================================================
++
++GNB_RF_OPTIONS="--RUs.[0].sdr_addrs serial=${USRP_SERIAL} --continuous-tx"
++UE_RF_OPTIONS="--usrp-args serial=${USRP_SERIAL_UE} --ue-fo-compensation --band 78"

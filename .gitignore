@@ -1,5 +1,3 @@
-.env/
-.env
 *.pyc
 __pycache__/
 doc/build
@@ -10,8 +8,17 @@ configs/**/.env
 configs/**/docker-compose.override.yaml
 **/demapper_in.txt
 **/demapper_out.txt
+*.csv
+*.pdf
+**/link_adaptation/.old
 .vscode/settings.json
-tutorials/ldpc_cuda/build
-tutorials/ldpc_cuda/test/*.so
+plugins/ldpc_cuda/build
+plugins/ldpc_cuda/test/*.so
 ext/
-
+env/
+.vscode/
+**/results/data/*
+!doc/source/plugins/link_adaptation/**/*.pdf
+plugins/ldpc_cuda/src/runtime/build/*
+*.plan
+*.log

@@ -1,0 +1,1540 @@
+diff --git docker-compose.override.yaml docker-compose.override.yaml
+new file mode 100644
+index 0000000..b089a75
+--- /dev/null
++++ docker-compose.override.yaml
+@@ -0,0 +1,17 @@
++# this is a template. remove the .template extension to use
++# contents of this file will be merged automatically with docker-compose.yaml
++# uncomment the relevant lines
++
++services:
++  oai-gnb:
++    volumes:
++      ##### Profiling tools if needed
++      # - /opt/nvidia/nsight-systems/:/opt/nvidia/nsight-systems
++    ##### Run gdbserver for debugging
++    #command: ["gdbserver",":7777","/opt/oai-gnb/bin/nr-softmodem","-O","/opt/oai-gnb/etc/gnb.conf"]
++    # Profile with Nsight Systems
++    #stdin_open: true # docker run -i
++    #tty: true        # docker run -t
++    #entrypoint: /bin/bash
++    #cap_add:
++    # - SYS_ADMIN
+diff --git docker-compose.yaml docker-compose.yaml
+index d531b15..5418e9e 100644
+--- docker-compose.yaml
++++ docker-compose.yaml
+@@ -1,11 +1,10 @@
+ services:
+     mysql:
+-        container_name: "rfsim5g-mysql"
++        container_name: "oai-mysql"
+         image: mysql:8.0
+-        init: true
+         volumes:
+-            - ./oai_db.sql:/docker-entrypoint-initdb.d/oai_db.sql
+-            - ./mysql-healthcheck.sh:/tmp/mysql-healthcheck.sh
++            - ../common/oai_db.sql:/docker-entrypoint-initdb.d/oai_db.sql
++            - ../common/mysql-healthcheck.sh:/tmp/mysql-healthcheck.sh
+         environment:
+             - TZ=Europe/Paris
+             - MYSQL_DATABASE=oai_db
+@@ -14,8 +13,6 @@ services:
+             - MYSQL_ROOT_PASSWORD=linux
+         healthcheck:
+             test: /bin/bash -c "/tmp/mysql-healthcheck.sh"
+-            start_period: 10s
+-            start_interval: 500ms
+             interval: 10s
+             timeout: 5s
+             retries: 30
+@@ -23,44 +20,49 @@ services:
+             public_net:
+                 ipv4_address: 192.168.71.131
+     oai-amf:
+-        container_name: "rfsim5g-oai-amf"
+-        image: oaisoftwarealliance/oai-amf:v2.1.9
++        container_name: "oai-amf"
++        image: oaisoftwarealliance/oai-amf:${AMF_TAG:-v2.1.10}
+         environment:
+             - TZ=Europe/paris
++            - OPERATOR_KEY=63bfa50ee6523365ff14c1f45f88737d
+         volumes:
+-            - ./mini_nonrf_config.yaml:/openair-amf/etc/config.yaml
++            - ${SYSTEM_CONFIG:-../common/sys_config.yaml}:/openair-amf/etc/config.yaml
+         depends_on:
+             - mysql
+         networks:
+             public_net:
+                 ipv4_address: 192.168.71.132
+     oai-smf:
+-        container_name: "rfsim5g-oai-smf"
+-        image: oaisoftwarealliance/oai-smf:v2.1.9
++        container_name: "oai-smf"
++        image: oaisoftwarealliance/oai-smf:${SMF_TAG:-v2.1.10}
+         environment:
+             - TZ=Europe/Paris
+         volumes:
+-            - ./mini_nonrf_config.yaml:/openair-smf/etc/config.yaml
++            - ${MINI_CONFIG:-../common/sys_config.yaml}:/openair-smf/etc/config.yaml
+         depends_on:
+             - oai-amf
+         networks:
+             public_net:
+                 ipv4_address: 192.168.71.133
+     oai-upf:
+-        container_name: "rfsim5g-oai-upf"
+-        image: oaisoftwarealliance/oai-upf:v2.1.9
+-        init: true
++        container_name: "oai-upf"
++        image: oaisoftwarealliance/oai-upf:${UPF_TAG:-v2.1.10}
+         environment:
+             - TZ=Europe/Paris
++        entrypoint: /bin/bash -c \
++                    "echo '200 eth1_table' >> /etc/iproute2/rt_tables;"\
++                    "ip route del default || true;"\
++                    "ip route add default via 192.168.72.135 dev eth1 table eth1_table;"\
++                    "ip rule add from 12.1.1.0/24 table eth1_table;"\
++                    "/openair-upf/bin/oai_upf -c /openair-upf/etc/config.yaml -o"
+         volumes:
+-            - ./mini_nonrf_config.yaml:/openair-upf/etc/config.yaml
++            - ${MINI_CONFIG:-../common/sys_config.yaml}:/openair-upf/etc/config.yaml
+         depends_on:
+             - oai-smf
+         cap_add:
+             - NET_ADMIN
+             - SYS_ADMIN
+-        cap_drop:
+-            - ALL
++            - NET_RAW
+         privileged: true
+         networks:
+             public_net:
+@@ -71,12 +73,13 @@ services:
+                 interface_name: eth1
+     oai-ext-dn:
+         privileged: true
+-        container_name: rfsim5g-oai-ext-dn
+-        image: oaisoftwarealliance/trf-gen-cn5g:focal
+-        init: true
++        container_name: oai-ext-dn
++        image: oaisoftwarealliance/trf-gen-cn5g:${TRFGEN_TAG:-latest}
+         entrypoint: /bin/bash -c \
+-              "iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE;"\
+-              "ip route add 12.1.1.0/24 via 192.168.72.134 dev eth0; sleep infinity"
++              "iptables-legacy -t nat -A POSTROUTING -o eth0 -j MASQUERADE;"\
++              "ip route add 12.1.1.0/24 via 192.168.72.134 dev eth0;"\
++              "iperf3 -s &"\
++              "sleep infinity"
+         depends_on:
+             - oai-upf
+         networks:
+@@ -84,320 +87,110 @@ services:
+                 ipv4_address: 192.168.72.135
+         healthcheck:
+             test: /bin/bash -c "ping -c 2 192.168.72.134"
+-            start_period: 10s
+-            start_interval: 500ms
+             interval: 10s
+             timeout: 5s
+             retries: 5
+     oai-gnb:
+-        image: ${REGISTRY:-oaisoftwarealliance}/${GNB_IMG:-oai-gnb}:${TAG:-develop}
+-        container_name: rfsim5g-oai-gnb
+-        cap_add:
+-            - SYS_NICE
++        image: ${GNB_IMAGE:-oai-gnb-cuda}:${GNB_TAG:-latest}
++        container_name: oai-gnb
++        runtime: nvidia
+         cap_drop:
+             - ALL
++        cap_add:
++            - NET_ADMIN  # for interface bring-up
++            - SYS_NICE   # for thread affinity
++            - IPC_LOCK   # to avoid page swapping
+         environment:
+-            USE_ADDITIONAL_OPTIONS: -E --rfsim --log_config.global_log_options level,nocolor,time
++            USE_B2XX: ${USE_B2XX:-}
++            USE_ADDITIONAL_OPTIONS: ${GNB_RF_OPTIONS:-} --telnetsrv --reorder-thread-disable 1 --log_config.global_log_options level,nocolor,time ${GNB_EXTRA_OPTIONS:-} ${GNB_THREAD_POOL:-}
+             ASAN_OPTIONS: detect_leaks=0
+         depends_on:
+             - oai-ext-dn
+         networks:
+             public_net:
+                 ipv4_address: 192.168.71.140
++            e2_net:
++                ipv4_address: 192.168.73.140
++        ports:
++            - 5556:5555
++        devices:
++            - /dev/bus/usb/:/dev/bus/usb/
+         volumes:
+-            - ../../conf_files/gnb.sa.band78.106prb.rfsim.yaml:/opt/oai-gnb/etc/gnb.yaml
++            - ${GNB_CONFIG:-../common/gnb.sa.usrpb200.24prbs.conf}:/opt/oai-gnb/etc/gnb.conf
++            - ../../plugins:/opt/oai-gnb/plugins # mount all plugins for weights, logs, data capture, etc.
+         healthcheck:
+-            test: /bin/bash -c "pgrep nr-softmodem"
+-            start_period: 10s
+-            start_interval: 500ms
++            test: /bin/bash -c "pgrep -f softmodem"
+             interval: 10s
+             timeout: 5s
+             retries: 5
+     oai-nr-ue:
+-        image: ${REGISTRY:-oaisoftwarealliance}/${NRUE_IMG:-oai-nr-ue}:${TAG:-develop}
+-        container_name: rfsim5g-oai-nr-ue
+-        cap_drop:
+-            - ALL
++        image: ${UE_IMAGE:-oai-nr-ue-cuda}:${UE_TAG:-latest}
++        container_name: oai-nr-ue
++        runtime: nvidia
+         cap_add:
+             - NET_ADMIN  # for interface bringup
+             - NET_RAW    # for ping
+-            - SYS_NICE
++            - SYS_NICE   # for thread affinity
++            - IPC_LOCK   # to avoid page swapping
+         environment:
+-            USE_ADDITIONAL_OPTIONS: -E --rfsim -r 106 --numerology 1 --uicc0.imsi 208990100001100 -C 3319680000 --rfsimulator.serveraddr 192.168.71.140 --log_config.global_log_options level,nocolor,time
+-        depends_on:
+-            - oai-gnb
++            USE_B2XX: ${USE_B2XX:-}
++            USE_ADDITIONAL_OPTIONS: ${UE_RF_OPTIONS:-} --log_config.global_log_options level,nocolor,time ${UE_EXTRA_OPTIONS:-}
+         networks:
+             public_net:
+                 ipv4_address: 192.168.71.150
+         devices:
+-             - /dev/net/tun:/dev/net/tun
+-        volumes:
+-            - ../../conf_files/nrue.uicc.yaml:/opt/oai-nr-ue/etc/nr-ue.yaml
+-        healthcheck:
+-            test: /bin/bash -c "pgrep nr-uesoftmodem"
+-            start_period: 10s
+-            start_interval: 500ms
+-            interval: 10s
+-            timeout: 5s
+-            retries: 5
+-    oai-nr-ue2:
+-        image: ${REGISTRY:-oaisoftwarealliance}/${NRUE_IMG:-oai-nr-ue}:${TAG:-develop}
+-        container_name: rfsim5g-oai-nr-ue2
+-        cap_drop:
+-            - ALL
+-        cap_add:
+-            - NET_ADMIN  # for interface bringup
+-            - NET_RAW    # for ping
+-            - SYS_NICE
+-        environment:
+-            USE_ADDITIONAL_OPTIONS: -E --rfsim -r 106 --numerology 1 --uicc0.imsi 208990100001101 -C 3319680000 --rfsimulator.serveraddr 192.168.71.140 --log_config.global_log_options level,nocolor,time
+-        depends_on:
+-            - oai-gnb
+-        networks:
+-            public_net:
+-                ipv4_address: 192.168.71.151
+-        devices:
+-             - /dev/net/tun:/dev/net/tun
+-        volumes:
+-            - ../../conf_files/nrue.uicc.conf:/opt/oai-nr-ue/etc/nr-ue.conf
+-        healthcheck:
+-            test: /bin/bash -c "pgrep nr-uesoftmodem"
+-            start_period: 10s
+-            start_interval: 500ms
+-            interval: 10s
+-            timeout: 5s
+-            retries: 5
+-    oai-nr-ue3:
+-        image: ${REGISTRY:-oaisoftwarealliance}/${NRUE_IMG:-oai-nr-ue}:${TAG:-develop}
+-        container_name: rfsim5g-oai-nr-ue3
+-        cap_drop:
+-            - ALL
+-        cap_add:
+-            - NET_ADMIN  # for interface bringup
+-            - NET_RAW    # for ping
+-            - SYS_NICE
+-        environment:
+-            USE_ADDITIONAL_OPTIONS: -E --rfsim -r 106 --numerology 1 --uicc0.imsi 208990100001102 -C 3319680000 --rfsimulator.serveraddr 192.168.71.140 --log_config.global_log_options level,nocolor,time
+-        depends_on:
+-            - oai-gnb
+-        networks:
+-            public_net:
+-                ipv4_address: 192.168.71.152
+-        devices:
+-             - /dev/net/tun:/dev/net/tun
+-        volumes:
+-            - ../../conf_files/nrue.uicc.conf:/opt/oai-nr-ue/etc/nr-ue.conf
+-        healthcheck:
+-            test: /bin/bash -c "pgrep nr-uesoftmodem"
+-            start_period: 10s
+-            start_interval: 500ms
+-            interval: 10s
+-            timeout: 5s
+-            retries: 5
+-    oai-nr-ue4:
+-        image: ${REGISTRY:-oaisoftwarealliance}/${NRUE_IMG:-oai-nr-ue}:${TAG:-develop}
+-        container_name: rfsim5g-oai-nr-ue4
+-        cap_drop:
+-            - ALL
+-        cap_add:
+-            - NET_ADMIN  # for interface bringup
+-            - NET_RAW    # for ping
+-            - SYS_NICE
+-        environment:
+-            USE_ADDITIONAL_OPTIONS: -E --rfsim -r 106 --numerology 1 --uicc0.imsi 208990100001103 -C 3319680000 --rfsimulator.serveraddr 192.168.71.140 --log_config.global_log_options level,nocolor,time
+-        depends_on:
+-            - oai-gnb
+-        networks:
+-            public_net:
+-                ipv4_address: 192.168.71.153
+-        devices:
+-             - /dev/net/tun:/dev/net/tun
+-        volumes:
+-            - ../../conf_files/nrue.uicc.conf:/opt/oai-nr-ue/etc/nr-ue.conf
+-        healthcheck:
+-            test: /bin/bash -c "pgrep nr-uesoftmodem"
+-            start_period: 10s
+-            start_interval: 500ms
+-            interval: 10s
+-            timeout: 5s
+-            retries: 5
+-    oai-nr-ue5:
+-        image: ${REGISTRY:-oaisoftwarealliance}/${NRUE_IMG:-oai-nr-ue}:${TAG:-develop}
+-        container_name: rfsim5g-oai-nr-ue5
+-        cap_drop:
+-            - ALL
+-        cap_add:
+-            - NET_ADMIN  # for interface bringup
+-            - NET_RAW    # for ping
+-            - SYS_NICE
+-        environment:
+-            USE_ADDITIONAL_OPTIONS: -E --rfsim -r 106 --numerology 1 --uicc0.imsi 208990100001104 -C 3319680000 --rfsimulator.serveraddr 192.168.71.140 --log_config.global_log_options level,nocolor,time
+-        depends_on:
+-            - oai-gnb
+-        networks:
+-            public_net:
+-                ipv4_address: 192.168.71.154
+-        devices:
+-             - /dev/net/tun:/dev/net/tun
+-        volumes:
+-            - ../../conf_files/nrue.uicc.conf:/opt/oai-nr-ue/etc/nr-ue.conf
+-        healthcheck:
+-            test: /bin/bash -c "pgrep nr-uesoftmodem"
+-            start_period: 10s
+-            start_interval: 500ms
+-            interval: 10s
+-            timeout: 5s
+-            retries: 5
+-    oai-nr-ue6:
+-        image: ${REGISTRY:-oaisoftwarealliance}/${NRUE_IMG:-oai-nr-ue}:${TAG:-develop}
+-        container_name: rfsim5g-oai-nr-ue6
+-        cap_drop:
+-            - ALL
+-        cap_add:
+-            - NET_ADMIN  # for interface bringup
+-            - NET_RAW    # for ping
+-            - SYS_NICE
+-        environment:
+-            USE_ADDITIONAL_OPTIONS: -E --rfsim -r 106 --numerology 1 --uicc0.imsi 208990100001105 -C 3319680000 --rfsimulator.serveraddr 192.168.71.140 --log_config.global_log_options level,nocolor,time
+-        depends_on:
+-            - oai-gnb
+-        networks:
+-            public_net:
+-                ipv4_address: 192.168.71.155
+-        devices:
+-             - /dev/net/tun:/dev/net/tun
++            - /dev/net/tun:/dev/net/tun
++            - /dev/bus/usb/:/dev/bus/usb/
+         volumes:
+-            - ../../conf_files/nrue.uicc.conf:/opt/oai-nr-ue/etc/nr-ue.conf
++            - ${UE_CONFIG:-../common/nrue.uicc.conf}:/opt/oai-nr-ue/etc/nr-ue.conf
+         healthcheck:
+             test: /bin/bash -c "pgrep nr-uesoftmodem"
+-            start_period: 10s
+-            start_interval: 500ms
+             interval: 10s
+             timeout: 5s
+             retries: 5
+-    oai-nr-ue7:
+-        image: ${REGISTRY:-oaisoftwarealliance}/${NRUE_IMG:-oai-nr-ue}:${TAG:-develop}
+-        container_name: rfsim5g-oai-nr-ue7
+-        cap_drop:
+-            - ALL
+-        cap_add:
+-            - NET_ADMIN  # for interface bringup
+-            - NET_RAW    # for ping
+-            - SYS_NICE
+-        environment:
+-            USE_ADDITIONAL_OPTIONS: -E --rfsim -r 106 --numerology 1 --uicc0.imsi 208990100001106 -C 3319680000 --rfsimulator.serveraddr 192.168.71.140 --log_config.global_log_options level,nocolor,time
+-        depends_on:
+-            - oai-gnb
++    nearRT-RIC:
++        image: oai-flexric:${FLEXRIC_TAG:-latest}
++        command: "stdbuf -o0 nearRT-RIC"
++        container_name: nearRT-RIC
+         networks:
+-            public_net:
+-                ipv4_address: 192.168.71.156
+-        devices:
+-             - /dev/net/tun:/dev/net/tun
++            e2_net:
++                ipv4_address: 192.168.73.154
+         volumes:
+-            - ../../conf_files/nrue.uicc.conf:/opt/oai-nr-ue/etc/nr-ue.conf
+-        healthcheck:
+-            test: /bin/bash -c "pgrep nr-uesoftmodem"
+-            start_period: 10s
+-            start_interval: 500ms
+-            interval: 10s
+-            timeout: 5s
+-            retries: 5
+-    oai-nr-ue8:
+-        image: ${REGISTRY:-oaisoftwarealliance}/${NRUE_IMG:-oai-nr-ue}:${TAG:-develop}
+-        container_name: rfsim5g-oai-nr-ue8
+-        cap_drop:
+-            - ALL
+-        cap_add:
+-            - NET_ADMIN  # for interface bringup
+-            - NET_RAW    # for ping
+-            - SYS_NICE
+-        environment:
+-            USE_ADDITIONAL_OPTIONS: -E --rfsim -r 106 --numerology 1 --uicc0.imsi 208990100001107 -C 3319680000 --rfsimulator.serveraddr 192.168.71.140 --log_config.global_log_options level,nocolor,time
+-        depends_on:
+-            - oai-gnb
+-        networks:
+-            public_net:
+-                ipv4_address: 192.168.71.157
+-        devices:
+-             - /dev/net/tun:/dev/net/tun
++            - ../common/flexric.conf:/usr/local/etc/flexric/flexric.conf
++    monitor_xapp:
++        image: oai-flexric:${FLEXRIC_TAG:-latest}
++        container_name: monitor_xapp
++        networks:
++            e2_net:
++                ipv4_address: 192.168.73.155
++        ports:
++            - "5555:5555"
+         volumes:
+-            - ../../conf_files/nrue.uicc.conf:/opt/oai-nr-ue/etc/nr-ue.conf
+-        healthcheck:
+-            test: /bin/bash -c "pgrep nr-uesoftmodem"
+-            start_period: 10s
+-            start_interval: 500ms
+-            interval: 10s
+-            timeout: 5s
+-            retries: 5
+-    oai-nr-ue9:
+-        image: ${REGISTRY:-oaisoftwarealliance}/${NRUE_IMG:-oai-nr-ue}:${TAG:-develop}
+-        container_name: rfsim5g-oai-nr-ue9
+-        cap_drop:
+-            - ALL
+-        cap_add:
+-            - NET_ADMIN  # for interface bringup
+-            - NET_RAW    # for ping
+-            - SYS_NICE
+-        environment:
+-            USE_ADDITIONAL_OPTIONS: -E --rfsim -r 106 --numerology 1 --uicc0.imsi 208990100001108 -C 3319680000 --rfsimulator.serveraddr 192.168.71.140 --log_config.global_log_options level,nocolor,time
+-        depends_on:
+-            - oai-gnb
+-        networks:
+-            public_net:
+-                ipv4_address: 192.168.71.158
+-        devices:
+-             - /dev/net/tun:/dev/net/tun
+-        volumes:
+-            - ../../conf_files/nrue.uicc.conf:/opt/oai-nr-ue/etc/nr-ue.conf
+-        healthcheck:
+-            test: /bin/bash -c "pgrep nr-uesoftmodem"
+-            start_period: 10s
+-            start_interval: 500ms
+-            interval: 10s
+-            timeout: 5s
+-            retries: 5
+-    oai-nr-ue10:
+-        image: ${REGISTRY:-oaisoftwarealliance}/${NRUE_IMG:-oai-nr-ue}:${TAG:-develop}
+-        container_name: rfsim5g-oai-nr-ue10
+-        cap_drop:
+-            - ALL
+-        cap_add:
+-            - NET_ADMIN  # for interface bringup
+-            - NET_RAW    # for ping
+-            - SYS_NICE
+-        environment:
+-            USE_ADDITIONAL_OPTIONS: -E --rfsim -r 106 --numerology 1 --uicc0.imsi 208990100001109 -C 3319680000 --rfsimulator.serveraddr 192.168.71.140 --log_config.global_log_options level,nocolor,time
+-        depends_on:
+-            - oai-gnb
+-        networks:
+-            public_net:
+-                ipv4_address: 192.168.71.159
+-        devices:
+-             - /dev/net/tun:/dev/net/tun
+-        volumes:
+-            - ../../conf_files/nrue.uicc.conf:/opt/oai-nr-ue/etc/nr-ue.conf
+-        healthcheck:
+-            test: /bin/bash -c "pgrep nr-uesoftmodem"
+-            start_period: 10s
+-            start_interval: 500ms
+-            interval: 10s
+-            timeout: 5s
+-            retries: 5
+-
++            - ../common/flexric.conf:/usr/local/etc/flexric/flexric.conf
++            - ${XAPP_SCRIPT:-../../plugins/ric_xapps/src/zmq_stats_server.py}:/xapp/xapp.py
++        entrypoint: python3 /xapp/xapp.py
+ networks:
+     public_net:
+         driver: bridge
+-        name: rfsim5g-oai-public-net
++        name: oai-public-net
+         ipam:
+             config:
+                 - subnet: 192.168.71.128/26
+         driver_opts:
+-            com.docker.network.bridge.name: "rfsim5g-public"
++            com.docker.network.bridge.name: "oai-public"
+     traffic_net:
+         driver: bridge
+-        name: rfsim5g-oai-traffic-net
++        name: oai-traffic-net
+         ipam:
+             config:
+                 - subnet: 192.168.72.128/26
+         driver_opts:
+-            com.docker.network.bridge.name: "rfsim5g-traffic"
++            com.docker.network.bridge.name: "oai-traffic"
++    e2_net:
++        driver: bridge
++        name: oai-e2-net
++        ipam:
++            config:
++                - subnet: 192.168.73.0/24
++        driver_opts:
++            com.docker.network.bridge.name: "e2"
+diff --git flexric.conf flexric.conf
+index 481c4e6..070d35a 100644
+--- flexric.conf
++++ flexric.conf
+@@ -1,5 +1,5 @@
+ [NEAR-RIC]
+-NEAR_RIC_IP = 192.168.70.150
++NEAR_RIC_IP = 192.168.73.154
+ 
+ [XAPP]
+ DB_DIR = /tmp/
+diff --git gnb.sa.band78.106prbs.conf gnb.sa.band78.106prbs.conf
+index 0057d9b..2ab1245 100644
+--- gnb.sa.band78.106prbs.conf
++++ gnb.sa.band78.106prbs.conf
+@@ -1,4 +1,4 @@
+-Active_gNBs = ( "gNB-in-docker");
++Active_gNBs = ( "gnb-oai");
+ # Asn1_verbosity, choice in: none, info, annoying
+ Asn1_verbosity = "none";
+ 
+@@ -6,17 +6,23 @@ gNBs =
+ (
+  {
+     ////////// Identification parameters:
+-    gNB_ID    =  0xe00;
+-    gNB_name  =  "gNB-in-docker";
++    gNB_ID = 0xe00;
++
++#     cell_type =  "CELL_MACRO_GNB";
++
++    gNB_name  =  "gnb-oai";
+ 
+     // Tracking area code, 0x0000 and 0xfffe are reserved values
+     tracking_area_code  =  1;
+-    plmn_list = ({ mcc = 222; mnc = 01; mnc_length = 2; snssaiList = ({ sst = 1, sd = 0xffffff }) });
++      plmn_list = ({ mcc = 262; mnc = 99; mnc_length = 2; snssaiList = ({ sst = 1, sd = 0xffffff }) });
+ 
+-    nr_cellid = 12345678L;
++    nr_cellid = 12345678L
+ 
+-    ////////// Physical parameters:
++#     tr_s_preference     = "local_mac"
+ 
++    ////////// Physical parameters:
++    sib1_tda            = 15;
++    min_rxtxtime = 6;
+ 
+     servingCellConfigCommon = (
+     {
+@@ -26,44 +32,43 @@ gNBs =
+ 
+ #  downlinkConfigCommon
+     #frequencyInfoDL
+-      # this is 3610.56 MHz
+-      absoluteFrequencySSB                                             = 640704;
+-      dl_frequencyBand                                                 = 78;
+-      # this is 3599.94 MHz
+-      dl_absoluteFrequencyPointA                                       = 639996;
++      # this is 3300.60 MHz + 53*12*30e-3 MHz = 3319.68
++      absoluteFrequencySSB                                          = 621312;
++      # this is 3300.60 MHz
++      dl_absoluteFrequencyPointA                                       = 620040;
+       #scs-SpecificCarrierList
+         dl_offstToCarrier                                              = 0;
+ # subcarrierSpacing
+ # 0=kHz15, 1=kHz30, 2=kHz60, 3=kHz120
+         dl_subcarrierSpacing                                           = 1;
+-        dl_carrierBandwidth                                            = 51;
++        dl_carrierBandwidth                                            = 106;
+      #initialDownlinkBWP
+       #genericParameters
+-        # this is RBstart=27,L=48 (275*(L-1))+RBstart
+-        initialDLBWPlocationAndBandwidth                               = 13750;
++        # this is RBstart=0,L=106 (275*(L-1))+RBstart
++        initialDLBWPlocationAndBandwidth                                        = 28875;
+ # subcarrierSpacing
+ # 0=kHz15, 1=kHz30, 2=kHz60, 3=kHz120
+-        initialDLBWPsubcarrierSpacing                                   = 1;
++        initialDLBWPsubcarrierSpacing                                           = 1;
+       #pdcch-ConfigCommon
+-        initialDLBWPcontrolResourceSetZero                              = 12;
+-        initialDLBWPsearchSpaceZero                                     = 0;
++        initialDLBWPcontrolResourceSetZero                                      = 11;
++        initialDLBWPsearchSpaceZero                                             = 0;
+ 
+   #uplinkConfigCommon
+      #frequencyInfoUL
+-      ul_frequencyBand                                              = 78;
++      ul_frequencyBand                                                 = 78;
+       #scs-SpecificCarrierList
+-      ul_offstToCarrier                                             = 0;
++      ul_offstToCarrier                                              = 0;
+ # subcarrierSpacing
+ # 0=kHz15, 1=kHz30, 2=kHz60, 3=kHz120
+-      ul_subcarrierSpacing                                          = 1;
+-      ul_carrierBandwidth                                           = 51;
++      ul_subcarrierSpacing                                           = 1;
++      ul_carrierBandwidth                                            = 106;
+       pMax                                                          = 20;
+      #initialUplinkBWP
+       #genericParameters
+-        initialULBWPlocationAndBandwidth                            = 13750;
++        initialULBWPlocationAndBandwidth                                        = 28875;
+ # subcarrierSpacing
+ # 0=kHz15, 1=kHz30, 2=kHz60, 3=kHz120
+-        initialULBWPsubcarrierSpacing                               = 1;
++        initialULBWPsubcarrierSpacing                                           = 1;
+       #rach-ConfigCommon
+         #rach-ConfigGeneric
+           prach_ConfigurationIndex                                  = 98;
+@@ -71,18 +76,21 @@ gNBs =
+ #0 = one, 1=two, 2=four, 3=eight
+           prach_msg1_FDM                                            = 0;
+           prach_msg1_FrequencyStart                                 = 0;
+-          zeroCorrelationZoneConfig                                 = 13;
+-          preambleReceivedTargetPower                               = -96;
++          zeroCorrelationZoneConfig                                 = 12;
++          preambleReceivedTargetPower                               = -104;
+ #preamblTransMax (0...10) = (3,4,5,6,7,8,10,20,50,100,200)
+           preambleTransMax                                          = 6;
+ #powerRampingStep
+ # 0=dB0,1=dB2,2=dB4,3=dB6
+         powerRampingStep                                            = 1;
++#ra_ReponseWindow
++#1,2,4,8,10,20,40,80
++        ra_ResponseWindow                                           = 5;
+ #ssb_perRACH_OccasionAndCB_PreamblesPerSSB_PR
+ #1=oneeighth,2=onefourth,3=half,4=one,5=two,6=four,7=eight,8=sixteen
+-        ssb_perRACH_OccasionAndCB_PreamblesPerSSB_PR                = 4;
+-#one (0..15) 4,8,12,16,...60,64
+-        ssb_perRACH_OccasionAndCB_PreamblesPerSSB                   = 14;
++        ssb_perRACH_OccasionAndCB_PreamblesPerSSB_PR                = 3;
++#oneHalf (0..15) 4,8,12,16,...60,64
++        ssb_perRACH_OccasionAndCB_PreamblesPerSSB                   = 15;
+ #ra_ContentionResolutionTimer
+ #(0..7) 8,16,24,32,40,48,56,64
+         ra_ContentionResolutionTimer                                = 7;
+@@ -107,7 +115,9 @@ gNBs =
+         pucchGroupHopping                                           = 0;
+         hoppingId                                                   = 40;
+         p0_nominal                                                  = -90;
+-
++# ssb_PositionsInBurs_BitmapPR
++# 1=short, 2=medium, 3=long
++      ssb_PositionsInBurst_PR                                       = 2;
+       ssb_PositionsInBurst_Bitmap                                   = 1;
+ 
+ # ssb_periodicityServingCell
+@@ -134,13 +144,14 @@ gNBs =
+       nrofDownlinkSlots                                             = 7;
+       nrofDownlinkSymbols                                           = 6;
+       nrofUplinkSlots                                               = 2;
+-      nrofUplinkSymbols                                             = 4;
++      nrofUplinkSymbols                                             = 0;
+ 
+-      ssPBCH_BlockPower                                             = -25;
++  ssPBCH_BlockPower                                             = -25;
+   }
+ 
+   );
+ 
++
+     # ------- SCTP definitions
+     SCTP :
+     {
+@@ -149,55 +160,65 @@ gNBs =
+         SCTP_OUTSTREAMS = 2;
+     };
+ 
+-
+     ////////// AMF parameters:
+-    amf_ip_address = ({ ipv4 = "172.21.16.137"; });
++        amf_ip_address = ({ ipv4 = "192.168.71.132"; });
+ 
++        NETWORK_INTERFACES :
++        {
+ 
+-    NETWORK_INTERFACES :
+-    {
+-        GNB_IPV4_ADDRESS_FOR_NG_AMF              = "172.21.16.109";
+-        GNB_IPV4_ADDRESS_FOR_NGU                 = "172.21.16.109";
+-        GNB_PORT_FOR_S1U                         = 2152; # Spec 2152
+-    };
++           GNB_IPV4_ADDRESS_FOR_NG_AMF              = "192.168.71.140";
++           GNB_IPV4_ADDRESS_FOR_NGU                 = "192.168.71.140";
++           GNB_PORT_FOR_S1U                         = 2152; # Spec 2152
++        };
+ 
+   }
+ );
+ 
+ MACRLCs = (
+-{
+-  num_cc                      = 1;
+-  tr_s_preference             = "local_L1";
+-  tr_n_preference             = "local_RRC";
+-  pusch_TargetSNRx10          = 200;
+-  pucch_TargetSNRx10          = 200;
+-  ul_prbblack_SNR_threshold   = 10;
+-}
++  {
++    num_cc           = 1;
++    tr_s_preference  = "local_L1";
++    tr_n_preference  = "local_RRC";
++    pusch_TargetSNRx10 = 200;
++    pucch_TargetSNRx10 = 200;
++    pusch_FailureThres          = 10;
++    ul_prbblack_SNR_threshold   = 10;
++  }
+ );
+ 
+ L1s = (
+ {
+   num_cc = 1;
+   tr_n_preference       = "local_mac";
++  #pusch_proc_threads    = 8;
++  max_ldpc_iterations   = 8;
+   prach_dtx_threshold   = 120;
+   pucch0_dtx_threshold  = 100;
++  pusch0_dtx_threshold  = 100;
+   ofdm_offset_divisor   = 8; #set this to UINT_MAX for offset 0
++  L1_rx_thread_core = 1;
++  L1_tx_thread_core = 2;
+ }
+ );
+ 
+ RUs = (
+-{
+-  local_rf       = "yes"
+-  nb_tx          = 1
+-  nb_rx          = 1
+-  att_tx         = 14;
+-  att_rx         = 14;
+-  bands          = [78];
+-  max_pdschReferenceSignalPower = -27;
+-  max_rxgain                    = 114;
+-  eNB_instances  = [0];
+-  clock_src = "internal";
+-}
++    {
++       local_rf       = "yes"
++        nb_tx          = 1
++        nb_rx          = 1
++        att_tx         = 6 # ranges 6-10 if the UE is close to the B210 antennas. Leave 0 otherwise
++        att_rx         = 6; # ranges 6-10 if the UE is close to the B210 antennas. Leave 0 otherwise
++        bands          = [78];
++        max_pdschReferenceSignalPower = -27;
++        max_rxgain                    = 114;
++        eNB_instances  = [0];
++        ##beamforming 1x2 matrix: 1 layer x 2 antennas
++        bf_weights = [0x00007fff, 0x0000];
++        clock_src = "internal";
++        tp_cores = [4,5,6,7]; # ru thread pool cores
++        #num_tp_cores   = 4;
++        ru_thread_core = 3;
++    }
+ );
+ 
+ 
+@@ -227,6 +248,41 @@ log_config :
+   rlc_log_level                         ="info";
+   pdcp_log_level                        ="info";
+   rrc_log_level                         ="info";
+-  ngap_log_level                        ="debug";
+-  f1ap_log_level                        ="debug";
++  ngap_log_level                        ="info";
++  f1ap_log_level                        ="info";
++};
++
++rfsimulator: {
++    serveraddr = "server";
+ };
++
++e2_agent = {
++  near_ric_ip_addr = "192.168.73.154";
++  sm_dir = "/usr/local/lib/flexric/";
++}
++
++# channel model used for RF simulator
++channelmod = {
++      max_chan = 10;
++      modellist = "modellist_rfsimu_1";
++      modellist_rfsimu_1 = (
++        { # DL, modify on UE side
++          model_name     = "rfsimu_channel_enB0";
++          type           = "AWGN";
++          ploss_dB       = 10;
++          noise_power_dB = -6.;
++          forgetfact     = 0;
++          offset         = 0;
++          ds_tdl         = 0;
++        },
++        { # UL, modify on gNB side
++          model_name     = "rfsimu_channel_ue0";
++          type           = "AWGN";
++          ploss_dB       = 10;
++          noise_power_dB = -8.;
++          forgetfact     = 0;
++          offset         = 0;
++          ds_tdl         = 0;
++        }
++      );
++    };
+diff --git gnb.sa.band78.24prbs.conf gnb.sa.band78.24prbs.conf
+index 0057d9b..aae3543 100644
+--- gnb.sa.band78.24prbs.conf
++++ gnb.sa.band78.24prbs.conf
+@@ -1,4 +1,5 @@
+-Active_gNBs = ( "gNB-in-docker");
++
++Active_gNBs = ( "gNB-oai");
+ # Asn1_verbosity, choice in: none, info, annoying
+ Asn1_verbosity = "none";
+ 
+@@ -7,16 +8,26 @@ gNBs =
+  {
+     ////////// Identification parameters:
+     gNB_ID    =  0xe00;
+-    gNB_name  =  "gNB-in-docker";
++    gNB_name  =  "gNB-oai";
+ 
+     // Tracking area code, 0x0000 and 0xfffe are reserved values
+     tracking_area_code  =  1;
+-    plmn_list = ({ mcc = 222; mnc = 01; mnc_length = 2; snssaiList = ({ sst = 1, sd = 0xffffff }) });
++      plmn_list = ({ mcc = 262; mnc = 99; mnc_length = 2; snssaiList = ({ sst = 1, sd = 0xffffff }) });
+ 
+     nr_cellid = 12345678L;
+ 
+     ////////// Physical parameters:
+ 
++    sib1_tda                    = 15;
++    min_rxtxtime                = 6;
++    # empirical observation: 6 required for USRP-based UE
++
++  pdcch_ConfigSIB1 = (
++      {
++        controlResourceSetZero = 2;
++        searchSpaceZero = 0;
++      }
++      );
+ 
+     servingCellConfigCommon = (
+     {
+@@ -26,26 +37,26 @@ gNBs =
+ 
+ #  downlinkConfigCommon
+     #frequencyInfoDL
+-      # this is 3610.56 MHz
+-      absoluteFrequencySSB                                             = 640704;
++      # this is 3600 MHz + 12 PRBs@30kHz SCS (same as initial BWP)
++      absoluteFrequencySSB                                             = 640320;
+       dl_frequencyBand                                                 = 78;
+-      # this is 3599.94 MHz
+-      dl_absoluteFrequencyPointA                                       = 639996;
++      # this is 3600 MHz
++      dl_absoluteFrequencyPointA                                       = 640032;
+       #scs-SpecificCarrierList
+         dl_offstToCarrier                                              = 0;
+ # subcarrierSpacing
+ # 0=kHz15, 1=kHz30, 2=kHz60, 3=kHz120
+         dl_subcarrierSpacing                                           = 1;
+-        dl_carrierBandwidth                                            = 51;
++        dl_carrierBandwidth                                            = 24;
+      #initialDownlinkBWP
+       #genericParameters
+         # this is RBstart=27,L=48 (275*(L-1))+RBstart
+-        initialDLBWPlocationAndBandwidth                               = 13750;
++        initialDLBWPlocationAndBandwidth                               = 6325;
+ # subcarrierSpacing
+ # 0=kHz15, 1=kHz30, 2=kHz60, 3=kHz120
+         initialDLBWPsubcarrierSpacing                                   = 1;
+       #pdcch-ConfigCommon
+-        initialDLBWPcontrolResourceSetZero                              = 12;
++        initialDLBWPcontrolResourceSetZero                              = 2;
+         initialDLBWPsearchSpaceZero                                     = 0;
+ 
+   #uplinkConfigCommon
+@@ -56,11 +67,11 @@ gNBs =
+ # subcarrierSpacing
+ # 0=kHz15, 1=kHz30, 2=kHz60, 3=kHz120
+       ul_subcarrierSpacing                                          = 1;
+-      ul_carrierBandwidth                                           = 51;
++      ul_carrierBandwidth                                           = 24;
+       pMax                                                          = 20;
+      #initialUplinkBWP
+       #genericParameters
+-        initialULBWPlocationAndBandwidth                            = 13750;
++        initialULBWPlocationAndBandwidth                            = 6325;
+ # subcarrierSpacing
+ # 0=kHz15, 1=kHz30, 2=kHz60, 3=kHz120
+         initialULBWPsubcarrierSpacing                               = 1;
+@@ -78,14 +89,17 @@ gNBs =
+ #powerRampingStep
+ # 0=dB0,1=dB2,2=dB4,3=dB6
+         powerRampingStep                                            = 1;
++#ra_ReponseWindow
++#1,2,4,8,10,20,40,80
++        ra_ResponseWindow                                           = 5;
+ #ssb_perRACH_OccasionAndCB_PreamblesPerSSB_PR
+ #1=oneeighth,2=onefourth,3=half,4=one,5=two,6=four,7=eight,8=sixteen
+         ssb_perRACH_OccasionAndCB_PreamblesPerSSB_PR                = 4;
+-#one (0..15) 4,8,12,16,...60,64
++#oneHalf (0..15) 4,8,12,16,...60,64
+         ssb_perRACH_OccasionAndCB_PreamblesPerSSB                   = 14;
+ #ra_ContentionResolutionTimer
+ #(0..7) 8,16,24,32,40,48,56,64
+-        ra_ContentionResolutionTimer                                = 7;
++        ra_ContentionResolutionTimer                                = 4;
+         rsrp_ThresholdSSB                                           = 19;
+ #prach-RootSequenceIndex_PR
+ #1 = 839, 2 = 139
+@@ -107,7 +121,9 @@ gNBs =
+         pucchGroupHopping                                           = 0;
+         hoppingId                                                   = 40;
+         p0_nominal                                                  = -90;
+-
++# ssb_PositionsInBurs_BitmapPR
++# 1=short, 2=medium, 3=long
++      ssb_PositionsInBurst_PR                                       = 2;
+       ssb_PositionsInBurst_Bitmap                                   = 1;
+ 
+ # ssb_periodicityServingCell
+@@ -134,7 +150,7 @@ gNBs =
+       nrofDownlinkSlots                                             = 7;
+       nrofDownlinkSymbols                                           = 6;
+       nrofUplinkSlots                                               = 2;
+-      nrofUplinkSymbols                                             = 4;
++      nrofUplinkSymbols                                             = 0;
+ 
+       ssPBCH_BlockPower                                             = -25;
+   }
+@@ -151,13 +167,13 @@ gNBs =
+ 
+ 
+     ////////// AMF parameters:
+-    amf_ip_address = ({ ipv4 = "172.21.16.137"; });
++    amf_ip_address = ({ ipv4 = "192.168.71.132"; });
+ 
+ 
+     NETWORK_INTERFACES :
+     {
+-        GNB_IPV4_ADDRESS_FOR_NG_AMF              = "172.21.16.109";
+-        GNB_IPV4_ADDRESS_FOR_NGU                 = "172.21.16.109";
++        GNB_IPV4_ADDRESS_FOR_NG_AMF              = "192.168.71.140";
++        GNB_IPV4_ADDRESS_FOR_NGU                 = "192.168.71.140";
+         GNB_PORT_FOR_S1U                         = 2152; # Spec 2152
+     };
+ 
+@@ -171,6 +187,10 @@ MACRLCs = (
+   tr_n_preference             = "local_RRC";
+   pusch_TargetSNRx10          = 200;
+   pucch_TargetSNRx10          = 200;
++  pusch_FailureThres          = 30;
++  #ul_max_mcs                  = 14;
++  #dl_max_mcs                  = 14;
++  #ul_bler_target_lower        = 0;
+   ul_prbblack_SNR_threshold   = 10;
+ }
+ );
+@@ -179,28 +199,39 @@ L1s = (
+ {
+   num_cc = 1;
+   tr_n_preference       = "local_mac";
+-  prach_dtx_threshold   = 120;
+-  pucch0_dtx_threshold  = 100;
++  #pusch_proc_threads    = 8;
++  max_ldpc_iterations   = 8;
++  prach_dtx_threshold   = 150;  # Increased for rfsim to reduce false PRACH detections
++  pucch0_dtx_threshold  = 150;  # Increased to be more tolerant
++  pusch0_dtx_threshold  = 150;  # Increased to be more tolerant
+   ofdm_offset_divisor   = 8; #set this to UINT_MAX for offset 0
++  L1_rx_thread_core = 1;
++  L1_tx_thread_core = 2;
+ }
+ );
+ 
+ RUs = (
+ {
+   local_rf       = "yes"
+-  nb_tx          = 1
+-  nb_rx          = 1
+-  att_tx         = 14;
+-  att_rx         = 14;
++  nb_tx          = 1 # SISO #2;MIMO
++  nb_rx          = 1 # SISO #2;MIMO
++  att_tx         = 0; # ranges 6-10 if the UE is close to the B210 antennas. Leave 0 otherwise
++  att_rx         = 0; # ranges 6-10 if the UE is close to the B210 antennas. Leave 0 otherwise
+   bands          = [78];
+   max_pdschReferenceSignalPower = -27;
+   max_rxgain                    = 114;
+   eNB_instances  = [0];
++  #beamforming 1x4 matrix:
++  bf_weights = [0x00007fff, 0x0000, 0x0000, 0x0000];
+   clock_src = "internal";
++  tp_cores = [3,4]; # ru thread pool cores
++  #num_tp_cores   = 4;
++  ru_thread_core = 5;
+ }
+ );
+ 
+ 
++
+ security = {
+   # preferred ciphering algorithms
+   # the first one of the list that an UE supports in chosen
+@@ -227,6 +258,42 @@ log_config :
+   rlc_log_level                         ="info";
+   pdcp_log_level                        ="info";
+   rrc_log_level                         ="info";
+-  ngap_log_level                        ="debug";
+-  f1ap_log_level                        ="debug";
++  ngap_log_level                        ="info";
++  f1ap_log_level                        ="info";
++};
++
++rfsimulator: {
++    serveraddr = "server";
+ };
++
++
++e2_agent = {
++  near_ric_ip_addr = "192.168.73.154";
++  sm_dir = "/usr/local/lib/flexric/";
++}
++
++# channel model used for RF simulator
++channelmod = {
++      max_chan = 10;
++      modellist = "modellist_rfsimu_1";
++      modellist_rfsimu_1 = (
++        { # DL, modify on UE side
++          model_name     = "rfsimu_channel_enB0";
++          type           = "AWGN";
++          ploss_dB       = 10;
++          noise_power_dB = -6.;
++          forgetfact     = 0;
++          offset         = 0;
++          ds_tdl         = 0;
++        },
++        { # UL, modify on gNB side
++          model_name     = "rfsimu_channel_ue0";
++          type           = "AWGN";
++          ploss_dB       = 10;
++          noise_power_dB = -8.;
++          forgetfact     = 0;
++          offset         = 0;
++          ds_tdl         = 0;
++        }
++      );
++    };
+diff --git gnb.sa.band78.51prbs.conf gnb.sa.band78.51prbs.conf
+index 0057d9b..f6a6c59 100644
+--- gnb.sa.band78.51prbs.conf
++++ gnb.sa.band78.51prbs.conf
+@@ -1,4 +1,4 @@
+-Active_gNBs = ( "gNB-in-docker");
++Active_gNBs = ( "gNB-oai");
+ # Asn1_verbosity, choice in: none, info, annoying
+ Asn1_verbosity = "none";
+ 
+@@ -7,16 +7,19 @@ gNBs =
+  {
+     ////////// Identification parameters:
+     gNB_ID    =  0xe00;
+-    gNB_name  =  "gNB-in-docker";
++    gNB_name  =  "gNB-oai";
+ 
+     // Tracking area code, 0x0000 and 0xfffe are reserved values
+     tracking_area_code  =  1;
+-    plmn_list = ({ mcc = 222; mnc = 01; mnc_length = 2; snssaiList = ({ sst = 1, sd = 0xffffff }) });
++    plmn_list = ({ mcc = 262; mnc = 99; mnc_length = 2; snssaiList = ({ sst = 1, sd = 0xffffff }) });
++
+ 
+     nr_cellid = 12345678L;
+ 
+     ////////// Physical parameters:
+ 
++    sib1_tda                                                  = 15;
++    min_rxtxtime                                              = 6;
+ 
+     servingCellConfigCommon = (
+     {
+@@ -26,11 +29,11 @@ gNBs =
+ 
+ #  downlinkConfigCommon
+     #frequencyInfoDL
+-      # this is 3610.56 MHz
+-      absoluteFrequencySSB                                             = 640704;
++      # this is 3300.30 MHz + (19 PRBs + 10 SCs)@30kHz SCS (GSCN: 7715)
++      absoluteFrequencySSB                                             = 620736;
+       dl_frequencyBand                                                 = 78;
+-      # this is 3599.94 MHz
+-      dl_absoluteFrequencyPointA                                       = 639996;
++      # this is 3300.30 MHz
++      dl_absoluteFrequencyPointA                                       = 620020;
+       #scs-SpecificCarrierList
+         dl_offstToCarrier                                              = 0;
+ # subcarrierSpacing
+@@ -78,10 +81,13 @@ gNBs =
+ #powerRampingStep
+ # 0=dB0,1=dB2,2=dB4,3=dB6
+         powerRampingStep                                            = 1;
++#ra_ReponseWindow
++#1,2,4,8,10,20,40,80
++        ra_ResponseWindow                                           = 6;
+ #ssb_perRACH_OccasionAndCB_PreamblesPerSSB_PR
+ #1=oneeighth,2=onefourth,3=half,4=one,5=two,6=four,7=eight,8=sixteen
+         ssb_perRACH_OccasionAndCB_PreamblesPerSSB_PR                = 4;
+-#one (0..15) 4,8,12,16,...60,64
++#oneHalf (0..15) 4,8,12,16,...60,64
+         ssb_perRACH_OccasionAndCB_PreamblesPerSSB                   = 14;
+ #ra_ContentionResolutionTimer
+ #(0..7) 8,16,24,32,40,48,56,64
+@@ -107,7 +113,9 @@ gNBs =
+         pucchGroupHopping                                           = 0;
+         hoppingId                                                   = 40;
+         p0_nominal                                                  = -90;
+-
++# ssb_PositionsInBurs_BitmapPR
++# 1=short, 2=medium, 3=long
++      ssb_PositionsInBurst_PR                                       = 2;
+       ssb_PositionsInBurst_Bitmap                                   = 1;
+ 
+ # ssb_periodicityServingCell
+@@ -134,7 +142,7 @@ gNBs =
+       nrofDownlinkSlots                                             = 7;
+       nrofDownlinkSymbols                                           = 6;
+       nrofUplinkSlots                                               = 2;
+-      nrofUplinkSymbols                                             = 4;
++      nrofUplinkSymbols                                             = 0;
+ 
+       ssPBCH_BlockPower                                             = -25;
+   }
+@@ -151,13 +159,13 @@ gNBs =
+ 
+ 
+     ////////// AMF parameters:
+-    amf_ip_address = ({ ipv4 = "172.21.16.137"; });
++    amf_ip_address = ({ ipv4 = "192.168.71.132"; });
+ 
+ 
+     NETWORK_INTERFACES :
+     {
+-        GNB_IPV4_ADDRESS_FOR_NG_AMF              = "172.21.16.109";
+-        GNB_IPV4_ADDRESS_FOR_NGU                 = "172.21.16.109";
++        GNB_IPV4_ADDRESS_FOR_NG_AMF              = "192.168.71.140";
++        GNB_IPV4_ADDRESS_FOR_NGU                 = "192.168.71.140";
+         GNB_PORT_FOR_S1U                         = 2152; # Spec 2152
+     };
+ 
+@@ -171,6 +179,10 @@ MACRLCs = (
+   tr_n_preference             = "local_RRC";
+   pusch_TargetSNRx10          = 200;
+   pucch_TargetSNRx10          = 200;
++  pusch_FailureThres          = 10;
++  #ul_max_mcs                  = 9;
++  #dl_max_mcs                  = 9;
++  #ul_bler_target_lower        = 0;
+   ul_prbblack_SNR_threshold   = 10;
+ }
+ );
+@@ -179,28 +191,37 @@ L1s = (
+ {
+   num_cc = 1;
+   tr_n_preference       = "local_mac";
++  #pusch_proc_threads    = 8;
++  max_ldpc_iterations   = 8;
+   prach_dtx_threshold   = 120;
+   pucch0_dtx_threshold  = 100;
++  pusch0_dtx_threshold  = 100;
+   ofdm_offset_divisor   = 8; #set this to UINT_MAX for offset 0
++  L1_rx_thread_core = 1;
++  L1_tx_thread_core = 2;
+ }
+ );
+ 
+ RUs = (
+ {
+   local_rf       = "yes"
+-  nb_tx          = 1
+-  nb_rx          = 1
+-  att_tx         = 14;
+-  att_rx         = 14;
++  nb_tx          = 1 # SISO #2;MIMO
++  nb_rx          = 1 # SISO #2;MIMO
++  att_tx         = 6; # ranges 6-10 if the UE is close to the B210 antennas. Leave 0 otherwise
++  att_rx         = 6; # ranges 6-10 if the UE is close to the B210 antennas. Leave 0 otherwise
+   bands          = [78];
+   max_pdschReferenceSignalPower = -27;
+   max_rxgain                    = 114;
+   eNB_instances  = [0];
++  #beamforming 1x4 matrix:
++  bf_weights = [0x00007fff, 0x0000, 0x0000, 0x0000];
+   clock_src = "internal";
++  tp_cores = [4,5,6,7]; # ru thread pool cores
++  #num_tp_cores   = 4;
++  ru_thread_core = 3;
+ }
+ );
+ 
+-
+ security = {
+   # preferred ciphering algorithms
+   # the first one of the list that an UE supports in chosen
+@@ -227,6 +248,42 @@ log_config :
+   rlc_log_level                         ="info";
+   pdcp_log_level                        ="info";
+   rrc_log_level                         ="info";
+-  ngap_log_level                        ="debug";
+-  f1ap_log_level                        ="debug";
++  ngap_log_level                        ="info";
++  f1ap_log_level                        ="info";
++};
++
++
++rfsimulator: {
++    serveraddr = "server";
+ };
++
++e2_agent = {
++  near_ric_ip_addr = "192.168.73.154";
++  sm_dir = "/usr/local/lib/flexric/";
++}
++
++# channel model used for RF simulator
++channelmod = {
++      max_chan = 10;
++      modellist = "modellist_rfsimu_1";
++      modellist_rfsimu_1 = (
++        { # DL, modify on UE side
++          model_name     = "rfsimu_channel_enB0";
++          type           = "AWGN";
++          ploss_dB       = 10;
++          noise_power_dB = -6.;
++          forgetfact     = 0;
++          offset         = 0;
++          ds_tdl         = 0;
++        },
++        { # UL, modify on gNB side
++          model_name     = "rfsimu_channel_ue0";
++          type           = "AWGN";
++          ploss_dB       = 10;
++          noise_power_dB = -8.;
++          forgetfact     = 0;
++          offset         = 0;
++          ds_tdl         = 0;
++        }
++      );
++    };
+diff --git mini_nonrf_config.yaml mini_nonrf_config.yaml
+index 10fb5bc..adfe915 100644
+--- mini_nonrf_config.yaml
++++ mini_nonrf_config.yaml
+@@ -54,13 +54,13 @@ nfs:
+       interface_name: eth0
+       port: 38412
+   smf:
+-    host: oai-smf
++    host: 192.168.71.133  # Use IP instead of hostname for N4
+     sbi:
+       port: 80
+       api_version: v1
+       interface_name: eth0
+     n4:
+-      interface_name: eth0
++      host: 192.168.71.133  # Explicitly set SMF N4 IP
+       port: 8805
+ 
+   upf:
+@@ -73,7 +73,7 @@ nfs:
+       interface_name: eth0
+       port: 2152
+     n4:
+-      interface_name: eth0
++      host: 192.168.71.134  # UPF's N4 IP on public_net
+       port: 8805
+     n6:
+       interface_name: eth1
+@@ -96,6 +96,7 @@ database:
+ snssais:
+   - &embb_slice1
+     sst: 1
++    sd: "FFFFFF"  # 6 hex digits, no 0x prefix - matches Quectel modem request
+ 
+ ############## NF-specific configuration
+ amf:
+@@ -111,13 +112,13 @@ amf:
+   statistics_timer_interval: 20  # in seconds
+   emergency_support: false
+   served_guami_list:
+-    - mcc: 208
++    - mcc: 262
+       mnc: 99
+       amf_region_id: 01
+       amf_set_id: 001
+       amf_pointer: 01
+   plmn_support_list:
+-    - mcc: 208
++    - mcc: 262
+       mnc: 99
+       tac: 0x0001
+       nssai:
+@@ -137,19 +138,23 @@ smf:
+     use_local_subscription_info: yes # Use infos from local_subscription_info or from UDM
+     use_local_pcc_rules: yes # Use infos from local_pcc_rules or from PCF
+   upfs:
+-    - host: oai-upf
++    - host: 192.168.71.134  # UPF's N4 on traffic_net (SMF auto-bound to this network) - FIXED: was 192.168.72.134
+       port: 8805
+       config:
+         enable_usage_reporting: no
+         # follows UPFInfo from 3GPP TS 29.510, currently only these values from interfaceUpfInfoList are supported
+       upf_info:
++        sNssaiUpfInfoList:
++          - sNssai: *embb_slice1
++            dnnUpfInfoList:
++              - dnn: "oai"
+         interfaceUpfInfoList:
+           - interfaceType: "N3"
+             networkInstance: "access.oai.org"
+           - interfaceType: "N6"
+             networkInstance: "core.oai.org"
+   ue_dns:
+-    primary_ipv4: "172.21.3.100"
++    primary_ipv4: "8.8.8.8"
+     primary_ipv6: "2001:4860:4860::8888"
+     secondary_ipv4: "8.8.8.8"
+     secondary_ipv6: "2001:4860:4860::8888"
+@@ -175,7 +180,7 @@ upf:
+   support_features:
+     enable_bpf_datapath: no    # If "on": BPF is used as datapath else simpleswitch is used, DEFAULT= off
+     enable_snat: yes           # If "on": Source natting is done for UE, DEFAULT= off
+-  remote_n6_gw: 127.0.0.1      # Dummy host since simple-switch does not use N6 GW
++  remote_n6_gw: "192.168.72.135"      # Dummy host since simple-switch does not use N6 GW
+   upf_info:
+     sNssaiUpfInfoList:
+       - sNssai: *embb_slice1
+diff --git nrue.uicc.conf nrue.uicc.conf
+index 5424abe..c42bace 100644
+--- nrue.uicc.conf
++++ nrue.uicc.conf
+@@ -1,43 +1,36 @@
+ uicc0 = {
+-  imsi = "208990100001100";
++  imsi = "262990100000832";
+   key = "fec86ba6eb707ed08905757b1bb44b8f";
+   opc= "C42449363BBAD02B66D16BC975D77CC1";
+   dnn= "oai";
+   nssai_sst=1;
+ }
+ 
+-position0 = {
+-    x = 0.0;
+-    y = 0.0;
+-    z = 6377900.0;
+-}
+-
+-thread-pool = "-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1"
+-
+ #/* configuration for channel modelisation */
+ #/* To be included in main config file when */
+ #/* channel modelisation is used (rfsimulator with chanmod options enabled) */
++# channel model used for RF simulator
+ channelmod = {
+-  max_chan = 10;
+-  modellist = "modellist_rfsimu_1";
+-  modellist_rfsimu_1 = (
+-    { # DL, modify on UE side
+-      model_name     = "rfsimu_channel_enB0"
+-      type           = "AWGN";
+-      ploss_dB       = 20;
+-      noise_power_dB = -4;
+-      forgetfact     = 0;
+-      offset         = 0;
+-      ds_tdl         = 0;
+-    },
+-    { # UL, modify on gNB side
+-      model_name     = "rfsimu_channel_ue0"
+-      type           = "AWGN";
+-      ploss_dB       = 20;
+-      noise_power_dB = -2;
+-      forgetfact     = 0;
+-      offset         = 0;
+-      ds_tdl         = 0;
+-    }
+-  );
+-};
+\ No newline at end of file
++      max_chan = 10;
++      modellist = "modellist_rfsimu_1";
++      modellist_rfsimu_1 = (
++        { # DL, modify on UE side
++          model_name     = "rfsimu_channel_enB0";
++          type           = "AWGN";
++          ploss_dB       = 10;
++          noise_power_dB = -6.;
++          forgetfact     = 0;
++          offset         = 0;
++          ds_tdl         = 0;
++        },
++        { # UL, modify on gNB side
++          model_name     = "rfsimu_channel_ue0";
++          type           = "AWGN";
++          ploss_dB       = 10;
++          noise_power_dB = -8.;
++          forgetfact     = 0;
++          offset         = 0;
++          ds_tdl         = 0;
++        }
++      );
++    };
+diff --git oai_db.sql oai_db.sql
+index ec5e497..aa30b46 100644
+--- oai_db.sql
++++ oai_db.sql
+@@ -101,6 +101,11 @@ CREATE TABLE `pdn` (
+ LOCK TABLES `pdn` WRITE;
+ /*!40000 ALTER TABLE `pdn` DISABLE KEYS */;
+ INSERT INTO `pdn` VALUES (1,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930000000001',9,15,'DISABLED','ENABLED','LIPA-only'),(41,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'20834123456789',9,15,'DISABLED','ENABLED','LIPA-only'),(40,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'20810000001234',9,15,'DISABLED','ENABLED','LIPA-only'),(42,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'31002890832150',9,15,'DISABLED','ENABLED','LIPA-only'),(16,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000002',9,15,'DISABLED','ENABLED','LIPA-only'),(43,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'001010123456789',9,15,'DISABLED','ENABLED','LIPA-only'),(2,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930000000002',9,15,'DISABLED','ENABLED','LIPA-only'),(3,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930000000003',9,15,'DISABLED','ENABLED','LIPA-only'),(4,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930000000004',9,15,'DISABLED','ENABLED','LIPA-only'),(5,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930000000005',9,15,'DISABLED','ENABLED','LIPA-only'),(6,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930000000006',9,15,'DISABLED','ENABLED','LIPA-only'),(7,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930000000007',9,15,'DISABLED','ENABLED','LIPA-only'),(8,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208940000000001',9,15,'DISABLED','ENABLED','LIPA-only'),(9,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208940000000002',9,15,'DISABLED','ENABLED','LIPA-only'),(10,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208940000000003',9,15,'DISABLED','ENABLED','LIPA-only'),(11,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208940000000004',9,15,'DISABLED','ENABLED','LIPA-only'),(12,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208940000000005',9,15,'DISABLED','ENABLED','LIPA-only'),(13,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208940000000006',9,15,'DISABLED','ENABLED','LIPA-only'),(14,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208940000000007',9,15,'DISABLED','ENABLED','LIPA-only'),(15,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000001',9,15,'DISABLED','ENABLED','LIPA-only'),(17,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000003',9,15,'DISABLED','ENABLED','LIPA-only'),(18,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000004',9,15,'DISABLED','ENABLED','LIPA-only'),(19,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000005',9,15,'DISABLED','ENABLED','LIPA-only'),(20,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000006',9,15,'DISABLED','ENABLED','LIPA-only'),(21,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000007',9,15,'DISABLED','ENABLED','LIPA-only'),(22,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001100',9,15,'DISABLED','ENABLED','LIPA-only'),(23,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001101',9,15,'DISABLED','ENABLED','LIPA-only'),(24,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001102',9,15,'DISABLED','ENABLED','LIPA-only'),(25,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001103',9,15,'DISABLED','ENABLED','LIPA-only'),(26,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001104',9,15,'DISABLED','ENABLED','LIPA-only'),(27,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001105',9,15,'DISABLED','ENABLED','LIPA-only'),(28,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001106',9,15,'DISABLED','ENABLED','LIPA-only'),(29,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001107',9,15,'DISABLED','ENABLED','LIPA-only'),(30,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001108',9,15,'DISABLED','ENABLED','LIPA-only'),(31,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001109',9,15,'DISABLED','ENABLED','LIPA-only'),(32,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001110',9,15,'DISABLED','ENABLED','LIPA-only'),(33,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930100001111',9,15,'DISABLED','ENABLED','LIPA-only'),(34,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930100001112',9,15,'DISABLED','ENABLED','LIPA-only'),(35,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930100001113',9,15,'DISABLED','ENABLED','LIPA-only'),(44,'operator','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930100001113',9,15,'DISABLED','ENABLED','LIPA-only'),(45,'operator','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930100001112',9,15,'DISABLED','ENABLED','LIPA-only'),(46,'operator','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208930100001111',9,15,'DISABLED','ENABLED','LIPA-only'),(47,'operator','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000002',9,15,'DISABLED','ENABLED','LIPA-only'),(48,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000008',9,15,'DISABLED','ENABLED','LIPA-only'),(49,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000009',9,15,'DISABLED','ENABLED','LIPA-only'),(50,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000010',9,15,'DISABLED','ENABLED','LIPA-only'),(51,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000011',9,15,'DISABLED','ENABLED','LIPA-only'),(52,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000012',9,15,'DISABLED','ENABLED','LIPA-only'),(53,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000013',9,15,'DISABLED','ENABLED','LIPA-only'),(54,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000014',9,15,'DISABLED','ENABLED','LIPA-only'),(55,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208950000000015',9,15,'DISABLED','ENABLED','LIPA-only'),(56,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001118',9,15,'DISABLED','ENABLED','LIPA-only'),(57,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001121',9,15,'DISABLED','ENABLED','LIPA-only'),(58,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001120',9,15,'DISABLED','ENABLED','LIPA-only'),(59,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'208920100001119',9,15,'DISABLED','ENABLED','LIPA-only');
++INSERT INTO `pdn` VALUES (60,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'262990100001101',9,15,'DISABLED','ENABLED','LIPA-only');
++INSERT INTO `pdn` VALUES (61,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'262990100016069',9,15,'DISABLED','ENABLED','LIPA-only');
++INSERT INTO `pdn` VALUES (62,'oai.ipv4','IPv4','0.0.0.0','0:0:0:0:0:0:0:0',50000000,100000000,3,'262990100000832',9,15,'DISABLED','ENABLED','LIPA-only');
++
++
+ /*!40000 ALTER TABLE `pdn` ENABLE KEYS */;
+ UNLOCK TABLES;
+ 
+@@ -217,6 +222,12 @@ INSERT INTO `users` VALUES ('208950000000037','380561234567','55000000000001',NU
+ INSERT INTO `users` VALUES ('208950000000038','380561234567','55000000000001',NULL,'PURGED',50,40000000,100000000,47,0000000000,1,0x0C0A34601D4F07677303652C0462535B,0,0,0x40,'ebd07771ace8677a',0x63bfa50ee6523365ff14c1f45f88737d);
+ INSERT INTO `users` VALUES ('208950000000039','380561234567','55000000000001',NULL,'PURGED',50,40000000,100000000,47,0000000000,1,0x0C0A34601D4F07677303652C0462535B,0,0,0x40,'ebd07771ace8677a',0x63bfa50ee6523365ff14c1f45f88737d);
+ INSERT INTO `users` VALUES ('208950000000040','380561234567','55000000000001',NULL,'PURGED',50,40000000,100000000,47,0000000000,1,0x0C0A34601D4F07677303652C0462535B,0,0,0x40,'ebd07771ace8677a',0x63bfa50ee6523365ff14c1f45f88737d);
++
++INSERT INTO `users` VALUES ('208920100001831','00000831','868371052647522',NULL,'PURGED',50,40000000,100000000,47,0000000000,1,0x0C0A34601D4F07677303652C0462535B,0,0,0x40,'ebd07771ace8677a',0x63bfa50ee6523365ff14c1f45f88737d);
++INSERT INTO `users` VALUES ('262990100000832','1','868371052647522',NULL,'PURGED',50,40000000,100000000,47,0000000000,1,0xfec86ba6eb707ed08905757b1bb44b8f,0,0,0x80,'ebd07771ace8677a',0xc42449363bbad02b66d16bc975d77cc1);
++INSERT INTO `users` VALUES ('262990100001101','1','868371052647522',NULL,'PURGED',50,40000000,100000000,47,0000000000,1,0xfec86ba6eb707ed08905757b1bb44b8f,0,0,0x80,'ebd07771ace8677a',0xc42449363bbad02b66d16bc975d77cc1);
++INSERT INTO `users` VALUES ('262990100016069','1','868371052647522',NULL,'PURGED',50,40000000,100000000,47,0000000000,1,0xfec86ba6eb707ed08905757b1bb44b8f,0,0,0x80,'ebd07771ace8677a',0xc42449363bbad02b66d16bc975d77cc1);
++
+ /*!40000 ALTER TABLE `users` ENABLE KEYS */;
+ UNLOCK TABLES;
+ /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
+diff --git sys_config.yaml sys_config.yaml
+index 10fb5bc..adfe915 100644
+--- sys_config.yaml
++++ sys_config.yaml
+@@ -54,13 +54,13 @@ nfs:
+       interface_name: eth0
+       port: 38412
+   smf:
+-    host: oai-smf
++    host: 192.168.71.133  # Use IP instead of hostname for N4
+     sbi:
+       port: 80
+       api_version: v1
+       interface_name: eth0
+     n4:
+-      interface_name: eth0
++      host: 192.168.71.133  # Explicitly set SMF N4 IP
+       port: 8805
+ 
+   upf:
+@@ -73,7 +73,7 @@ nfs:
+       interface_name: eth0
+       port: 2152
+     n4:
+-      interface_name: eth0
++      host: 192.168.71.134  # UPF's N4 IP on public_net
+       port: 8805
+     n6:
+       interface_name: eth1
+@@ -96,6 +96,7 @@ database:
+ snssais:
+   - &embb_slice1
+     sst: 1
++    sd: "FFFFFF"  # 6 hex digits, no 0x prefix - matches Quectel modem request
+ 
+ ############## NF-specific configuration
+ amf:
+@@ -111,13 +112,13 @@ amf:
+   statistics_timer_interval: 20  # in seconds
+   emergency_support: false
+   served_guami_list:
+-    - mcc: 208
++    - mcc: 262
+       mnc: 99
+       amf_region_id: 01
+       amf_set_id: 001
+       amf_pointer: 01
+   plmn_support_list:
+-    - mcc: 208
++    - mcc: 262
+       mnc: 99
+       tac: 0x0001
+       nssai:
+@@ -137,19 +138,23 @@ smf:
+     use_local_subscription_info: yes # Use infos from local_subscription_info or from UDM
+     use_local_pcc_rules: yes # Use infos from local_pcc_rules or from PCF
+   upfs:
+-    - host: oai-upf
++    - host: 192.168.71.134  # UPF's N4 on traffic_net (SMF auto-bound to this network) - FIXED: was 192.168.72.134
+       port: 8805
+       config:
+         enable_usage_reporting: no
+         # follows UPFInfo from 3GPP TS 29.510, currently only these values from interfaceUpfInfoList are supported
+       upf_info:
++        sNssaiUpfInfoList:
++          - sNssai: *embb_slice1
++            dnnUpfInfoList:
++              - dnn: "oai"
+         interfaceUpfInfoList:
+           - interfaceType: "N3"
+             networkInstance: "access.oai.org"
+           - interfaceType: "N6"
+             networkInstance: "core.oai.org"
+   ue_dns:
+-    primary_ipv4: "172.21.3.100"
++    primary_ipv4: "8.8.8.8"
+     primary_ipv6: "2001:4860:4860::8888"
+     secondary_ipv4: "8.8.8.8"
+     secondary_ipv6: "2001:4860:4860::8888"
+@@ -175,7 +180,7 @@ upf:
+   support_features:
+     enable_bpf_datapath: no    # If "on": BPF is used as datapath else simpleswitch is used, DEFAULT= off
+     enable_snat: yes           # If "on": Source natting is done for UE, DEFAULT= off
+-  remote_n6_gw: 127.0.0.1      # Dummy host since simple-switch does not use N6 GW
++  remote_n6_gw: "192.168.72.135"      # Dummy host since simple-switch does not use N6 GW
+   upf_info:
+     sNssaiUpfInfoList:
+       - sNssai: *embb_slice1

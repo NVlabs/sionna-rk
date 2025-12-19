@@ -36,8 +36,6 @@ release = "0.1"
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 
-sys.path.append(os.path.abspath("./_ext")) # load custom extensions
-
 extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
@@ -46,6 +44,14 @@ extensions = [
     "sphinx_rtd_theme",
     "sphinx.ext.viewcode",
     "sphinx_copybutton",
+]
+
+# nbsphinx configuration - map ipython3 to python for syntax highlighting
+nbsphinx_codecell_lexer = 'python3'
+
+# Suppress specific warnings that are harmless
+suppress_warnings = [
+    'misc.highlighting_failure',  # Suppress Pygments lexer warnings for ipython3
 ]
 
 # Add any paths that contain templates here, relative to this directory.

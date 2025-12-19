@@ -1,0 +1,4 @@
+[submodule "ext/neural_rx"]
+	path = ext/neural_rx
+	url = https://github.com/NVlabs/neural_rx.git
+	branch = srk

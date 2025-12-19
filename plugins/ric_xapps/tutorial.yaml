@@ -1,0 +1,19 @@
+#
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+
+name: ric_xapps
+description: RAN Intelligent Controller xApps for network optimization
+
+tests:
+  unit:
+    enabled: false # there are no unit tests for this tutorial
+    command: pytest tests/unit -v
+  integration:
+    enabled: true
+    command: ./tests/integration/run_integration.sh
+
+build:
+  enabled: false
+  command: ""

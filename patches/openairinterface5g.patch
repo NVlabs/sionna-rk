@@ -1,27 +1,171 @@
-diff --git a/common/utils/telnetsrv/telnetsrv_proccmd.c b/common/utils/telnetsrv/telnetsrv_proccmd.c
-index 4255b20956..cecf0b9783 100644
---- a/common/utils/telnetsrv/telnetsrv_proccmd.c
-+++ b/common/utils/telnetsrv/telnetsrv_proccmd.c
-@@ -222,11 +222,12 @@ char aname[256];
-     tdata->numlines = 0;
+diff --git a/.gitignore b/.gitignore
+index d1c6979e76..846a6b66ce 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -25,3 +25,7 @@ nfapi_nr_interface_scf
+ *.log
+ *.out
+ CMakeUserPresets.json
++tutorials/
++
++# Generated files
++host_product_family
+diff --git a/.gitmodules b/.gitmodules
+index adf63b85a3..dc68d61ca4 100644
+--- a/.gitmodules
++++ b/.gitmodules
+@@ -1,4 +1,4 @@
+ [submodule "openair2/E2AP/flexric"]
+ 	path = openair2/E2AP/flexric
+ 	url = https://gitlab.eurecom.fr/mosaic5g/flexric.git
+-	branch = remotes/origin/service-models-integration
++	branch = remotes/origin/service-models-integration 
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a71b1c3ea2..e721041ce5 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -2142,6 +2142,16 @@ endif (${T_TRACER})
+ include(${OPENAIR1_DIR}/PHY/CODING/nrLDPC_decoder/nrLDPC_tools/CMakeLists.txt)
+ 
+ set(ENABLE_TESTS OFF CACHE STRING "Activate build of tests")
++set(ENABLE_PLUGINS ON CACHE STRING "Activate build of plugins")
++
++if (EXISTS "/oai-ran/host_product_family")
++  file(READ "/oai-ran/host_product_family" _host_product_family)
++  if( _host_product_family MATCHES "DGX")
++    message(STATUS "Detected DGX platform, enabling optimizations")
++    set(ENABLE_DGX_OPTIMIZATIONS ON CACHE STRING "Use DGX-specific fast paths")
++  endif ()
++endif ()
++
+ set_property(CACHE ENABLE_TESTS PROPERTY TYPE BOOL)
+ set(ENABLE_PHYSIM_TESTS OFF CACHE STRING "Activate build of physim tests")
+ set_property(CACHE ENABLE_PHYSIM_TESTS PROPERTY TYPE BOOL)
+@@ -2187,3 +2197,6 @@ add_subdirectory(openair2)
+ add_subdirectory(openair3)
+ add_subdirectory(radio)
+ add_subdirectory(tests)
++if (ENABLE_PLUGINS)
++  add_subdirectory(plugins)
++endif ()
+diff --git a/common/utils/actor/actor.h b/common/utils/actor/actor.h
+index 023533d2d7..c6be9b1d1f 100644
+--- a/common/utils/actor/actor.h
++++ b/common/utils/actor/actor.h
+@@ -21,7 +21,7 @@
+ 
+ #ifndef ACTOR_H
+ #define ACTOR_H
+-#include "notified_fifo.h"
++#include "../threadPool/notified_fifo.h"
+ 
+ #define INIT_ACTOR(ptr, name, core_affinity) init_actor((Actor_t *)ptr, name, core_affinity);
+ 
+diff --git a/common/utils/load_module_shlib.c b/common/utils/load_module_shlib.c
+index 825012ce6a..c8f8834b76 100644
+--- a/common/utils/load_module_shlib.c
++++ b/common/utils/load_module_shlib.c
+@@ -202,7 +202,10 @@ int load_module_version_shlib(char *modname, char *version, loader_shlibfunc_t *
+       shlib->numfunc = 0;
+     }
+     for (int i = 0; i < numf; i++) {
+-      farray[i].fptr = dlsym(lib_handle,farray[i].fname);
++      loader_shlibfunc_t lfun = farray[i];
++      lfun.fptr = dlsym(lib_handle,farray[i].fname);
++      if (lfun.fptr)
++        farray[i].fptr = lfun.fptr;
+       if (!farray[i].fptr) {
+         fprintf(stderr, "[LOADER] load_module_shlib(): function %s not found: %s\n",
+                   farray[i].fname, dlerror());
+diff --git a/common/utils/threadPool/thread-pool.c b/common/utils/threadPool/thread-pool.c
+index 2a31602e6e..95191d3d11 100644
+--- a/common/utils/threadPool/thread-pool.c
++++ b/common/utils/threadPool/thread-pool.c
+@@ -55,6 +55,34 @@ void pushTpool(tpool_t* tpool, task_t task)
+   push_not_q(&q_arr[index % len_thr], task);
+ }
+ 
++// extern
++void (*initThreadHook)() = NULL;
++void (*exitThreadHook)() = NULL;
++
++static void initThreadTaskFunc(void* args) {
++  void (*cur_initThreadHook)() = (void(*)()) args;
++  if (cur_initThreadHook)
++    cur_initThreadHook();
++}
++
++void threadinitTpool(tpool_t* tpool) {
++  void (*cur_initThreadHook)();
++  __atomic_load(&initThreadHook, &cur_initThreadHook, __ATOMIC_ACQUIRE);
++  if (!cur_initThreadHook)
++    return;
++
++  task_t task = { };
++  task.func = &initThreadTaskFunc;
++  task.args = (void*) cur_initThreadHook;
++
++  size_t const len_thr = tpool->len_thr;
++  not_q_t* q_arr = (not_q_t*)tpool->q_arr;
++
++  for (size_t i = 0; i < len_thr; ++i) {
++    push_not_q(&q_arr[i], task);
++  }
++}
++
+ static void* worker_thread(void* arg)
+ {
+   DevAssert(arg != NULL);
+@@ -69,6 +97,12 @@ static void* worker_thread(void* arg)
+   not_q_t* q_arr = (not_q_t*)tpool->q_arr;
+ 
+   init_not_q(&q_arr[idx], idx);
++
++  void (*ran_initThreadHook)();
++  __atomic_load(&initThreadHook, &ran_initThreadHook, __ATOMIC_ACQUIRE);
++  if (ran_initThreadHook)
++    ran_initThreadHook();
++
+   // Synchronize all threads
+   pthread_barrier_wait(&tpool->barrier);
+ 
+@@ -90,9 +124,22 @@ static void* worker_thread(void* arg)
+       pushTpool(tpool, (task_t){.args = NULL, .func = NULL});
+       break;
+     }
++
++    if (ret.t.func == initThreadTaskFunc && ret.t.args) {
++      if (ret.t.args == (void*) ran_initThreadHook)
++        continue;
++      else
++        ran_initThreadHook = (void(*)()) ret.t.args;
++    }
++
+     ret.t.func(ret.t.args);
    }
  
-+#ifdef __x86_64__
-   unsigned int eax = 11, ebx = 0, ecx = 1, edx = 0;
--
-   asm volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "0"(eax), "2"(ecx) :);
- 
-   prnt("System has %d cores %d threads %d Actual threads", eax, ebx, edx);
-+#endif
- 
-   prnt("\n  id          name            state   USRmod    KRNmod  prio nice   vsize   proc pol \n\n");
-   snprintf(aname, sizeof(aname), "/proc/%d/stat", getpid());
-diff --git a/docker/Dockerfile.base.cuda.aarch64 b/docker/Dockerfile.base.cuda.aarch64
-new file mode 100644
-index 0000000000..d2832dfbef
++  void (*cur_exitThreadHook)();
++  __atomic_load(&exitThreadHook, &cur_exitThreadHook, __ATOMIC_ACQUIRE);
++  if (cur_exitThreadHook)
++    cur_exitThreadHook();
++
+   free(args);
+   return NULL;
+ }
+diff --git a/detect_host.sh b/detect_host.sh
+new file mode 100755
+index 0000000000..92e06a28e2
 --- /dev/null
-+++ b/docker/Dockerfile.base.cuda.aarch64
-@@ -0,0 +1,97 @@
++++ b/detect_host.sh
+@@ -0,0 +1,2 @@
++touch host_product_family
++cat /sys/devices/virtual/dmi/id/*family > host_product_family
+diff --git a/docker/Dockerfile.base.ubuntu.cuda b/docker/Dockerfile.base.ubuntu.cuda
+new file mode 100644
+index 0000000000..f4b7426323
+--- /dev/null
++++ b/docker/Dockerfile.base.ubuntu.cuda
+@@ -0,0 +1,96 @@
 +#/*
 +# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
 +# * contributor license agreements.  See the NOTICE file distributed with
@@ -45,61 +189,58 @@ index 0000000000..d2832dfbef
 +#---------------------------------------------------------------------
 +#
 +# Dockerfile for the Open-Air-Interface BUILD service
-+#   Valid for Ubuntu 22.04
++#   Valid for Ubuntu 24.04
 +#
 +#---------------------------------------------------------------------
 +
++ARG BASE_IMAGE=nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04
 +
-+FROM nvcr.io/nvidia/l4t-jetpack:r36.3.0 AS ran-base-cuda
++FROM $BASE_IMAGE AS ran-base-cuda
 +ARG NEEDED_GIT_PROXY
++ARG TARGETARCH
 +ENV DEBIAN_FRONTEND=noninteractive
 +ENV TZ=Europe/Paris
 +ENV BUILD_UHD_FROM_SOURCE=True
-+ENV UHD_VERSION=4.4.0.0
-+#ENV SIMDE_VERSION=389f360a66d4a3bec62b7d71ad8be877487809ba
-+ENV SIMDE_VERSION=tags/v0.7.6
-+ENV CFLAGS="-fsigned-char"
-+ENV CXXFLAGS="-fsigned-char"
++ENV UHD_VERSION=4.8.0.0
++# --break-system-packages allows externally managed environment in pip in newer versions of pip
++ENV PIP_BREAK_SYSTEM_PACKAGES=1
++# in orin, we use this to install gcc-12, g++12 and adjust BUILD_OPTION to support FlexRIC
++ARG EXTRA_DEB_PKGS="tensorrt-dev"
 +
-+#use gcc-12 to avoid problems of default gcc-11 in FlexRIC
++#install developers pkg/repo
 +RUN apt-get update && \
-+    DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes && \
-+    DEBIAN_FRONTEND=noninteractive apt-get install --yes \
++    apt-get upgrade --yes && \
++    apt-get install --yes \
 +       #gcc needed for build_oai
 +       build-essential \
++       ccache \
 +       psmisc \
 +       git \
-+       tzdata \
++#       #use gcc-12 to avoid problems of default gcc-11 in FlexRIC
++#       gcc-12 \
++#       g++-12 \
 +       xxd \
 +       libpcre2-dev \
 +       python3-dev \
 +       bison \
 +       flex \
 +       m4 \
-+      # ARM64 packages - needed?
-+      libblas-dev \
-+      liblapack-dev \
-+      liblapacke-dev \
-+      libreadline-dev \
-+      libgnutls28-dev \
-+      libconfig-dev \
-+      libsctp-dev \
-+      libssl-dev \
-+      libtool \
-+      zlib1g-dev \
++       libzmq3-dev \
++       libcjson-dev \
++       tensorrt \
++       # tensorrt-dev \
 +       # python3-pip for conf template generation
-+       python3-pip && \
-+    pip3 install --ignore-installed pyyaml && \
-+   apt-get clean
++       python3-pip \
++       wget ${EXTRA_DEB_PKGS} && \
++    pip3 install --ignore-installed pyyaml
 +
 +# Add "Tini - A tiny but valid init for containers", https://github.com/krallin/tini
 +# it will be copied into target containers, to print exit numbers and handle signals properly
 +ENV TINI_VERSION=v0.19.0
-+ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-arm64 /tini
-+RUN chmod +x /tini
++RUN wget https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-${TARGETARCH} -O /tini && chmod +x /tini
 +
 +# In some network environments, GIT proxy is required
-+#RUN /bin/bash -c "if [[ -v NEEDED_GIT_PROXY ]]; then git config --global http.proxy $NEEDED_GIT_PROXY; fi"
++RUN /bin/bash -c "if [[ -v NEEDED_GIT_PROXY ]]; then git config --global http.proxy $NEEDED_GIT_PROXY; fi"
 +
 +# Copying only the needed files to create ran-base
 +WORKDIR /oai-ran/cmake_targets/tools
@@ -110,124 +251,23 @@ index 0000000000..d2832dfbef
 +WORKDIR /oai-ran/cmake_targets
 +COPY cmake_targets/build_oai .
 +
-+WORKDIR /oai-ran
-+COPY oaienv .
-+
-+#run build_oai -I to get the builder image
-+RUN /bin/sh oaienv && \
-+    cd cmake_targets && \
-+    mkdir -p log && \
-+    ./build_oai --verbose-compile -I -w USRP --install-optional-packages && \
-+    apt-get clean
-diff --git a/docker/Dockerfile.base.ubuntu22.aarch64 b/docker/Dockerfile.base.ubuntu22.aarch64
-new file mode 100644
-index 0000000000..efa354c386
---- /dev/null
-+++ b/docker/Dockerfile.base.ubuntu22.aarch64
-@@ -0,0 +1,97 @@
-+#/*
-+# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
-+# * contributor license agreements.  See the NOTICE file distributed with
-+# * this work for additional information regarding copyright ownership.
-+# * The OpenAirInterface Software Alliance licenses this file to You under
-+# * the OAI Public License, Version 1.1  (the "License"); you may not use this file
-+# * except in compliance with the License.
-+# * You may obtain a copy of the License at
-+# *
-+# *      http://www.openairinterface.org/?page_id=698
-+# *
-+# * Unless required by applicable law or agreed to in writing, software
-+# * distributed under the License is distributed on an "AS IS" BASIS,
-+# * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+# * See the License for the specific language governing permissions and
-+# * limitations under the License.
-+# *-------------------------------------------------------------------------------
-+# * For more information about the OpenAirInterface (OAI) Software Alliance:
-+# *      contact@openairinterface.org
-+# */
-+#---------------------------------------------------------------------
-+#
-+# Dockerfile for the Open-Air-Interface BUILD service
-+#   Valid for Ubuntu 22.04
-+#
-+#---------------------------------------------------------------------
-+
-+
-+FROM ubuntu:jammy AS ran-base
-+ARG NEEDED_GIT_PROXY
-+ENV DEBIAN_FRONTEND=noninteractive
-+ENV TZ=Europe/Paris
-+ENV BUILD_UHD_FROM_SOURCE=True
-+ENV UHD_VERSION=4.4.0.0
-+#ENV SIMDE_VERSION=389f360a66d4a3bec62b7d71ad8be877487809ba
-+ENV SIMDE_VERSION=tags/v0.7.6
-+ENV CFLAGS="-fsigned-char"
-+ENV CXXFLAGS="-fsigned-char"
-+
-+#use gcc-12 to avoid problems of default gcc-11 in FlexRIC
-+RUN apt-get update && \
-+    DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes && \
-+    DEBIAN_FRONTEND=noninteractive apt-get install --yes \
-+       #gcc needed for build_oai
-+       build-essential \
-+       psmisc \
-+       git \
-+       tzdata \
-+       xxd \
-+       libpcre2-dev \
-+       python3-dev \
-+       bison \
-+       flex \
-+       m4 \
-+      # ARM64 packages - needed?
-+      libblas-dev \
-+      liblapack-dev \
-+      liblapacke-dev \
-+      libreadline-dev \
-+      libgnutls28-dev \
-+      libconfig-dev \
-+      libsctp-dev \
-+      libssl-dev \
-+      libtool \
-+      zlib1g-dev \
-+       # python3-pip for conf template generation
-+       python3-pip && \
-+    pip3 install --ignore-installed pyyaml && \
-+   apt-get clean
-+
-+# Add "Tini - A tiny but valid init for containers", https://github.com/krallin/tini
-+# it will be copied into target containers, to print exit numbers and handle signals properly
-+ENV TINI_VERSION=v0.19.0
-+ADD https://github.com/krallin/tini/releases/download/${TINI_VERSION}/tini-arm64 /tini
-+RUN chmod +x /tini
-+
-+# In some network environments, GIT proxy is required
-+#RUN /bin/bash -c "if [[ -v NEEDED_GIT_PROXY ]]; then git config --global http.proxy $NEEDED_GIT_PROXY; fi"
-+
-+# Copying only the needed files to create ran-base
-+WORKDIR /oai-ran/cmake_targets/tools
-+COPY cmake_targets/tools/build_helper \
-+     cmake_targets/tools/uhd-4.x-tdd-patch.diff \
-+     ./
-+
-+WORKDIR /oai-ran/cmake_targets
-+COPY cmake_targets/build_oai .
++# note: output of running, detect_host.sh run first if missing
++COPY host_product_family /oai-ran/host_product_family
 +
 +WORKDIR /oai-ran
 +COPY oaienv .
 +
 +#run build_oai -I to get the builder image
-+RUN /bin/sh oaienv && \
++RUN /bin/sh oaienv && \ 
 +    cd cmake_targets && \
 +    mkdir -p log && \
-+    ./build_oai -I -w USRP --install-optional-packages && \
-+    apt-get clean
-diff --git a/docker/Dockerfile.build.cuda.aarch64 b/docker/Dockerfile.build.cuda.aarch64
++    ./build_oai -I -w USRP --install-optional-packages
+diff --git a/docker/Dockerfile.build.ubuntu.cuda b/docker/Dockerfile.build.ubuntu.cuda
 new file mode 100644
-index 0000000000..73b89b77d0
+index 0000000000..2218a33242
 --- /dev/null
-+++ b/docker/Dockerfile.build.cuda.aarch64
-@@ -0,0 +1,57 @@
++++ b/docker/Dockerfile.build.ubuntu.cuda
+@@ -0,0 +1,76 @@
 +#/*
 +# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
 +# * contributor license agreements.  See the NOTICE file distributed with
@@ -251,250 +291,261 @@ index 0000000000..73b89b77d0
 +#---------------------------------------------------------------------
 +#
 +# Dockerfile for the Open-Air-Interface BUILD service
-+#   Valid for Ubuntu 22.04
++#   Valid for Ubuntu 24.04
 +#
 +#---------------------------------------------------------------------
 +
-+  ARG DOCKER_CUSTOM_IMAGE_TAG=latest
-+  FROM ran-base-cuda:${DOCKER_CUSTOM_IMAGE_TAG} AS ran-build-cuda
-+  ARG BUILD_OPTION
-+
-+  RUN DEBIAN_FRONTEND=noninteractive apt-get install --yes rsync
-+
-+  RUN rm -Rf /oai-ran
-+  WORKDIR /oai-ran
-+  COPY . .
-+
-+  RUN mkdir -p cmake_targets/log
-+
-+  # build all targets so final targets can be created afterwards
-+  RUN /bin/sh oaienv && \
-+    cd cmake_targets && \
-+    mkdir -p log && \
-+    ./build_oai -c --ninja \
-+      --eNB --gNB --RU --UE --nrUE \
-+      --build-lib "telnetsrv uescope nrscope ldpc_cuda" \
-+      -w USRP -t Ethernet \
-+      --build-e2 --cmake-opt "-DXAPP_MULTILANGUAGE=OFF" \
-+      --noavx512 \
-+      --cmake-opt -DENABLE_CUDA=ON \
-+      --cmake-opt -DCMAKE_C_FLAGS="-fsigned-char" \
-+      --cmake-opt -DCMAKE_CXX_FLAGS="-fsigned-char" \
-+      $BUILD_OPTION && \
-+    echo "---- ldd on executables ----" && \
-+    ldd ran_build/build/*softmodem* ran_build/build/nr-cuup ran_build/build/oairu && \
-+    echo "---- ldd on shared libraries ----" && \
-+    ldd ran_build/build/*.so
-diff --git a/docker/Dockerfile.build.ubuntu22.aarch64 b/docker/Dockerfile.build.ubuntu22.aarch64
-new file mode 100644
-index 0000000000..8fae51b05c
---- /dev/null
-+++ b/docker/Dockerfile.build.ubuntu22.aarch64
-@@ -0,0 +1,53 @@
-+#/*
-+# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
-+# * contributor license agreements.  See the NOTICE file distributed with
-+# * this work for additional information regarding copyright ownership.
-+# * The OpenAirInterface Software Alliance licenses this file to You under
-+# * the OAI Public License, Version 1.1  (the "License"); you may not use this file
-+# * except in compliance with the License.
-+# * You may obtain a copy of the License at
-+# *
-+# *      http://www.openairinterface.org/?page_id=698
-+# *
-+# * Unless required by applicable law or agreed to in writing, software
-+# * distributed under the License is distributed on an "AS IS" BASIS,
-+# * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+# * See the License for the specific language governing permissions and
-+# * limitations under the License.
-+# *-------------------------------------------------------------------------------
-+# * For more information about the OpenAirInterface (OAI) Software Alliance:
-+# *      contact@openairinterface.org
-+# */
-+#---------------------------------------------------------------------
-+#
-+# Dockerfile for the Open-Air-Interface BUILD service
-+#   Valid for Ubuntu 22.04
-+#
-+#---------------------------------------------------------------------
-+
-+FROM ran-base:latest AS ran-build
++ARG DOCKER_CUSTOM_IMAGE_TAG=latest
++FROM ran-base-cuda:${DOCKER_CUSTOM_IMAGE_TAG} AS ran-build-cuda
 +ARG BUILD_OPTION
++ARG FLEXRIC_BUILD_OPTIONS
++ARG NVIDIA_DRIVER_CAPABILITIES=all
++ARG E2AP_VERSION=E2AP_V3
++ARG KPM_VERSION=KPM_V3_00
 +
 +RUN rm -Rf /oai-ran
 +WORKDIR /oai-ran
-+COPY . .
 +
-+RUN mkdir -p cmake_targets/log
++# Copy OAI and plugins from sionna-rk context
++COPY ext/openairinterface5g/ .
++COPY plugins/ plugins/
 +
 +# build all targets so final targets can be created afterwards
-+RUN /bin/sh oaienv && \
++RUN \
++   # Mount CCache cache direrctory
++   --mount=type=cache,target=/root/.cache/ccache/ \
++   # Mount CPM package cache
++   --mount=type=cache,target=/root/.cache/cpm/ \
++    /bin/sh oaienv && \
 +    cd cmake_targets && \
 +    mkdir -p log && \
 +    ./build_oai -c --ninja \
 +      --eNB --gNB --RU --UE --nrUE \
 +      --build-lib "telnetsrv enbscope uescope nrscope" \
 +      -w USRP -t Ethernet \
-+      --build-e2 --cmake-opt -DXAPP_MULTILANGUAGE=OFF \
++      --build-e2 --cmake-opt -DKPM_VERSION=$KPM_VERSION --cmake-opt -DE2AP_VERSION=$E2AP_VERSION \
 +      --noavx512 \
-+      --cmake-opt -DCMAKE_C_FLAGS="-fstack-protector-strong" --cmake-opt -DCMAKE_CXX_FLAGS="-fstack-protector-strong" $BUILD_OPTION && \
-+      #--cmake-opt -DCMAKE_C_FLAGS="-Werror -Wno-error=unused-variable" --cmake-opt -DCMAKE_CXX_FLAGS="-Werror -Wno-error=unused-variable" $BUILD_OPTION && \
++      --build-tool-opt -k10 \
++      --cmake-opt -DCMAKE_C_FLAGS="-Werror" --cmake-opt -DCMAKE_CXX_FLAGS="-Werror" $BUILD_OPTION && \
 +    # Mainly to see if the sanitize option was perfectly executed
 +    echo "---- ldd on executables ----" && \
 +    ldd ran_build/build/*softmodem* ran_build/build/nr-cuup ran_build/build/oairu && \
 +    echo "---- ldd on shared libraries ----" && \
 +    ldd ran_build/build/*.so
-diff --git a/docker/Dockerfile.eNB.ubuntu22.aarch64 b/docker/Dockerfile.eNB.ubuntu22.aarch64
++
++## Build FlexRIC for SM Models
++RUN \
++    # Mount CCache cache direrctory
++    --mount=type=cache,target=/root/.cache/ccache/ \
++    mkdir -p openair2/E2AP/flexric/build && \
++    cd openair2/E2AP/flexric/build && \
++    cmake -GNinja -DCMAKE_BUILD_TYPE=Release \
++          -DKPM_VERSION=$KPM_VERSION \
++          -DE2AP_VERSION=$E2AP_VERSION $FLEXRIC_BUILD_OPTIONS .. && \
++    ninja && \
++    ninja install
+diff --git a/docker/Dockerfile.flexric.ubuntu b/docker/Dockerfile.flexric.ubuntu
 new file mode 100644
-index 0000000000..34d30a93bb
+index 0000000000..bab504ef7c
 --- /dev/null
-+++ b/docker/Dockerfile.eNB.ubuntu22.aarch64
-@@ -0,0 +1,139 @@
-+#/*
-+# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
-+# * contributor license agreements.  See the NOTICE file distributed with
-+# * this work for additional information regarding copyright ownership.
-+# * The OpenAirInterface Software Alliance licenses this file to You under
-+# * the OAI Public License, Version 1.1  (the "License"); you may not use this file
-+# * except in compliance with the License.
-+# * You may obtain a copy of the License at
-+# *
-+# *      http://www.openairinterface.org/?page_id=698
-+# *
-+# * Unless required by applicable law or agreed to in writing, software
-+# * distributed under the License is distributed on an "AS IS" BASIS,
-+# * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+# * See the License for the specific language governing permissions and
-+# * limitations under the License.
-+# *-------------------------------------------------------------------------------
-+# * For more information about the OpenAirInterface (OAI) Software Alliance:
-+# *      contact@openairinterface.org
-+# */
-+#---------------------------------------------------------------------
++++ b/docker/Dockerfile.flexric.ubuntu
+@@ -0,0 +1,190 @@
 +#
-+# Dockerfile for the Open-Air-Interface BUILD service
-+#   Valid for Ubuntu 22.04
++# Fixed FlexRIC Dockerfile - builds from source with stability improvements
 +#
-+#---------------------------------------------------------------------
++ARG BASE_IMAGE=ubuntu:noble
 +
-+FROM ran-base:latest AS enb-base
-+
-+FROM ran-build:latest AS enb-build
-+
-+
-+#start from scratch for target executable
-+FROM ubuntu:jammy AS oai-enb
-+ARG BUILD_OPTION
++FROM $BASE_IMAGE AS oai-flexric-base
 +ENV DEBIAN_FRONTEND=noninteractive
 +ENV TZ=Europe/Paris
++# --break-system-packages allows externally managed environment in pip in newer versions of pip
++ENV PIP_BREAK_SYSTEM_PACKAGES=1 
 +
++# Install dependencies
 +RUN apt-get update && \
 +    DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes && \
 +    DEBIAN_FRONTEND=noninteractive apt-get install --yes \
-+        software-properties-common \
-+        procps \
-+        libsctp1 \
-+        libboost-chrono1.74.0 \
-+        libboost-date-time1.74.0 \
-+        libboost-filesystem1.74.0 \
-+        libboost-regex1.74.0 \
-+        libboost-serialization1.74.0 \
-+        libboost-thread1.74.0 \
-+        libboost-system1.74.0 \
-+        libboost-program-options1.74.0 \
-+        tzdata \
-+        libblas3 \
-+        libconfig9 \
-+        openssl \
-+        net-tools \
-+        wget \
-+        iperf3 \
-+        iputils-ping \
-+        iproute2 \
-+        gdb \
-+        python3 \
-+        python3-six \
-+        python3-requests \
-+        libusb-1.0-0 && \
-+# Installing older version of iperf2 for feMBMS test
-+    wget --quiet http://fr.archive.ubuntu.com/ubuntu/pool/universe/i/iperf/iperf_2.0.13+dfsg1-1build1_amd64.deb && \
-+    dpkg -i iperf_2.0.13+dfsg1-1build1_amd64.deb && \
-+# iperf --version returns 1 that fails docker build
-+    iperf --version || true && \
-+    rm -f iperf_2.0.13+dfsg1-1build1_amd64.deb && \
-+    apt-get remove -y wget && \
-+# if the --sanitize option was used to build, additional packages are required
-+    /bin/bash -c 'if [[ "$BUILD_OPTION" = "--sanitize" ]]; then DEBIAN_FRONTEND=noninteractive apt-get install --yes \
-+        #libasan5 \ # see below
-+        libubsan1 \
-+        liblapacke; fi' && \
-+    apt-get clean -y && \
-+    rm -rf /var/lib/apt/lists/*
++       build-essential \
++       libsctp-dev \
++       git \
++       wget \
++       tar \
++       m4 \
++       automake \
++       libtool \
++       python3 \
++       cmake \
++       cmake-curses-gui \
++       bison \
++       flex \
++       gdb \
++       valgrind \
++       libpcre2-dev \
++       python3-dev \
++       python3-pip \
++       gcc-12 \
++       g++-12 \
++       mold \
++       ninja-build && \
++    apt-get clean
 +
-+# we select another compile (gcc-12) for compilation, requiring another libasan
-+# library version. Installing it above would install the wrong version. Hence,
-+# copy the right version from ran-build. When upgrading to Ubuntu24, install
-+# the correct one above!
-+# GM: in aarch64, we have version 6.0.0, not 8.0.0
-+COPY --from=enb-build /usr/lib/aarch64-linux-gnu/libasan.so.6.0.0 /usr/lib/aarch64-linux-gnu/
++# Build SWIG for Python bindings
++RUN git clone https://github.com/swig/swig.git && \
++    cd swig && \
++    git checkout release-4.1 && \
++    ./autogen.sh && \
++    ./configure --prefix=/usr/ && \
++    make -j8 && \
++    make install && \
++    ldconfig
 +
-+WORKDIR /opt/oai-enb/bin
-+COPY --from=enb-build \
-+    /oai-ran/cmake_targets/ran_build/build/lte-softmodem ./
-+COPY ./docker/scripts/enb_entrypoint.sh ./entrypoint.sh
++# Build ASN1C
++RUN rm -rf /tmp/asn1c && \
++    git clone https://github.com/mouse07410/asn1c /tmp/asn1c && \
++    cd /tmp/asn1c && \
++    git checkout 940dd5fa9f3917913fd487b13dfddfacd0ded06e && \
++    git log -n1 && \
++    autoreconf -iv && \
++    ./configure --prefix /opt/asn1c/ && \
++    make -j`nproc` && \
++    make install
 +
-+COPY --from=enb-build \
-+     /oai-ran/cmake_targets/ran_build/build/liboai_eth_transpro.so \
-+     /oai-ran/cmake_targets/ran_build/build/librfsimulator.so \
-+     /oai-ran/cmake_targets/ran_build/build/liboai_usrpdevif.so \
-+     /oai-ran/cmake_targets/ran_build/build/libcoding.so \
-+     /oai-ran/cmake_targets/ran_build/build/libparams_libconfig.so \
-+     /oai-ran/cmake_targets/ran_build/build/libdfts.so \
-+     /oai-ran/cmake_targets/ran_build/build/liboai_iqplayer.so \
-+     /oai-ran/cmake_targets/ran_build/build/libtelnetsrv.so \
-+     /oai-ran/cmake_targets/ran_build/build/libtelnetsrv_enb.so \
-+     /usr/local/lib/
++FROM oai-flexric-base AS oai-flexric-builder
++ARG E2AP_VERSION=E2AP_V3
++ARG KPM_VERSION=KPM_V3_00
 +
-+# Now we are copying from builder-image the UHD files.
-+COPY --from=enb-base /usr/local/bin/uhd_find_devices /usr/local/bin
-+COPY --from=enb-base /usr/local/lib/libuhd.so.4.4.0 /usr/local/lib
-+COPY --from=enb-base /usr/local/lib/uhd/utils/uhd_images_downloader.py /opt/oai-enb/bin
++WORKDIR /flexric
 +
-+RUN /bin/bash -c "ln -s /usr/local/lib/liboai_usrpdevif.so /usr/local/lib/liboai_device.so" && \
-+    /bin/bash -c "ln -s /usr/local/lib/liboai_eth_transpro.so /usr/local/lib/liboai_transpro.so" && \
-+    ldconfig && \
-+    echo "---- ldd on lte-softmodem ----" && \
-+    ldd /opt/oai-enb/bin/lte-softmodem && \
-+    echo "---- ldd on shared libraries ----" && \
-+    ldd /usr/local/lib/liboai_eth_transpro.so \
-+        /usr/local/lib/librfsimulator.so \
-+        /usr/local/lib/liboai_usrpdevif.so \
-+        /usr/local/lib/libparams_libconfig.so \
-+        /usr/local/lib/libdfts.so \
-+        /usr/local/lib/liboai_iqplayer.so \
-+        /usr/local/lib/libtelnetsrv.so \
-+        /usr/local/lib/libtelnetsrv_enb.so \
-+        /usr/local/lib/libuhd.so.4.4.0
++# Clone FlexRIC from the embedded source
++COPY openair2/E2AP/flexric /flexric
 +
-+WORKDIR /opt/oai-enb
++# Build with RelWithDebInfo for better debugging while keeping optimization
++# Enable XAPP_MULTILANGUAGE to build Python bindings via SWIG
++RUN set -ex && \
++    echo "--- Verify SWIG is installed ---" && \
++    swig -version && \
++    echo "--- Verify Python3 development files ---" && \
++    python3 --version && \
++    python3-config --includes && \
++    echo "--- Starting FlexRIC build ---" && \
++    mkdir -p /tmp && \
++    rm -rf build && \
++    mkdir build && \
++    cd build && \
++    cmake -GNinja \
++          -DCMAKE_BUILD_TYPE=RelWithDebInfo \
++          -DE2AP_VERSION=$E2AP_VERSION \
++          -DKPM_VERSION=$KPM_VERSION \
++          -DXAPP_MULTILANGUAGE=ON \
++          -DCMAKE_C_COMPILER=gcc-12 \
++          -DCMAKE_CXX_COMPILER=g++-12 \
++          -DCMAKE_C_FLAGS="-g -O2 -fno-omit-frame-pointer" \
++          -DCMAKE_CXX_FLAGS="-g -O2 -fno-omit-frame-pointer" \
++          .. && \
++    echo "--- Running ninja build ---" && \
++    ninja -v && \
++    echo "--- Installing FlexRIC ---" && \
++    ninja install && \
++    echo "--- Verifying build artifacts ---" && \
++    test -f /flexric/build/examples/ric/nearRT-RIC || (echo "ERROR: nearRT-RIC not built" && exit 1) && \
++    test -f /flexric/build/src/xApp/libe42_xapp_shared.so || (echo "ERROR: xApp library not built" && exit 1) && \
++    echo "--- Check shared objects dependencies for executable nearRT-RIC ---" && \
++    ldd /flexric/build/examples/ric/nearRT-RIC && \
++    echo "--- Check shared objects dependencies for xApp shared library ---" && \
++    ldd /flexric/build/src/xApp/libe42_xapp_shared.so && \
++    echo "--- Verify Python SDK was built ---" && \
++    ls -la /flexric/build/examples/xApp/python3/ && \
++    test -f /flexric/build/examples/xApp/python3/xapp_sdk.py || (echo "WARNING: Python xApp SDK not built" && exit 1)
 +
-+# 2152 --> S1U, GTP/UDP
-+# 36412 --> S1C, SCTP/UDP
-+# 36422 --> X2C, SCTP/UDP
-+EXPOSE 2152/udp 36412/udp 36422/udp
-+#EXPOSE 22100/tcp # ?
-+#EXPOSE 50000/udp # IF5 / ORI (control)
-+#EXPOSE 50001/udp # IF5 / ECPRI (data)
++#---------------------------------------------------------------------
++# TARGET IMAGE
++#---------------------------------------------------------------------
 +
-+COPY --from=enb-base /tini /tini
-+ENTRYPOINT ["/tini", "-v", "--", "/opt/oai-enb/bin/entrypoint.sh"]
-+CMD ["/opt/oai-enb/bin/lte-softmodem", "-O", "/opt/oai-enb/etc/enb.conf"]
-diff --git a/docker/Dockerfile.gNB.cuda.aarch64 b/docker/Dockerfile.gNB.cuda.aarch64
++FROM $BASE_IMAGE AS oai-flexric-fixed
++ENV DEBIAN_FRONTEND=noninteractive
++ENV TZ=Europe/Paris
++# --break-system-packages allows externally managed environment in pip in newer versions of pip
++ENV PIP_BREAK_SYSTEM_PACKAGES=1 
++
++# Install runtime packages + debugging tools
++RUN apt-get update && \
++    DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes && \
++    DEBIAN_FRONTEND=noninteractive apt-get install --yes \
++       psmisc \
++       gpg \
++       wget \
++       libsctp1 \
++       python3 \
++       python3-pip \
++       gdb \
++       valgrind \
++       strace && \
++    apt-get autoremove -y && \
++    apt-get autoclean -y
++
++# Install Python packages for xApp functionality
++RUN pip3 install --no-cache-dir \
++    pyzmq
++
++WORKDIR /
++
++# Copy FlexRIC libraries and binaries
++COPY --from=oai-flexric-builder \
++    /usr/local/lib/flexric /usr/local/lib/flexric
++
++COPY --from=oai-flexric-builder \
++    /flexric/build/src/xApp/libe42_xapp_shared.so \
++    /flexric/build/src/xApp/
++
++COPY --from=oai-flexric-builder \
++    /flexric/build/examples/ric/nearRT-RIC /usr/local/bin/nearRT-RIC
++
++# Copy xApps
++COPY --from=oai-flexric-builder \
++    /flexric/build/examples/xApp /usr/local/flexric/xApp
++
++# Copy E2 agent emulators
++COPY --from=oai-flexric-builder \
++    /flexric/build/examples/emulator/agent /usr/local/flexric/emulator/agent
++
++# Copy Python xApp SDK (if available)
++COPY --from=oai-flexric-builder \
++    /flexric/build/examples/xApp/python3/ /usr/local/flexric/xApp/python3/
++
++# Set Python path to include xApp SDK
++ENV PYTHONPATH=/usr/local/flexric/xApp/python3
++
++# Create workspace directory for custom xApp scripts
++RUN mkdir -p /xapp
++
++RUN ldconfig && \
++    echo "--- Check shared objects dependencies for executable nearRT-RIC ---" && \
++    ldd /usr/local/bin/nearRT-RIC && \
++    echo "--- Check shared objects dependencies for xApp shared library ---" && \
++    ldd /flexric/build/src/xApp/libe42_xapp_shared.so && \
++    echo "--- Check shared objects dependencies for flexric shared libraries ---" && \
++    ldd /usr/local/lib/flexric/*.so && \
++    echo "--- Verify Python SDK installation ---" && \
++    python3 -c "import sys; sys.path.insert(0, '/usr/local/flexric/xApp/python3'); import xapp_sdk; print('✓ Python xApp SDK installed successfully')" || echo "⚠ Python xApp SDK not available"
++
++## E2
++EXPOSE 36421/sctp
++## E42
++EXPOSE 36422/sctp
++## ZMQ (for xApp communication)
++EXPOSE 5555/tcp
++
++WORKDIR /
++
++# Use unbuffered output and add ulimit for core dumps
++CMD ["sh", "-c", "ulimit -c unlimited && stdbuf -o0 nearRT-RIC"]
++
+diff --git a/docker/Dockerfile.gNB.ubuntu.cuda b/docker/Dockerfile.gNB.ubuntu.cuda
 new file mode 100644
-index 0000000000..0f3221ec5d
+index 0000000000..b048532702
 --- /dev/null
-+++ b/docker/Dockerfile.gNB.cuda.aarch64
-@@ -0,0 +1,136 @@
++++ b/docker/Dockerfile.gNB.ubuntu.cuda
+@@ -0,0 +1,158 @@
 +#/*
 +# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
 +# * contributor license agreements.  See the NOTICE file distributed with
@@ -518,39 +569,44 @@ index 0000000000..0f3221ec5d
 +#---------------------------------------------------------------------
 +#
 +# Dockerfile for the Open-Air-Interface BUILD service
-+#   Valid for Ubuntu20.04
++#   Valid for Ubuntu24.04
 +#
 +#---------------------------------------------------------------------
 +
++ARG BASE_IMAGE=nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04
 +ARG DOCKER_CUSTOM_IMAGE_TAG=latest
++ARG DOCKER_CUSTOM_BASE_IMAGE_TAG=${DOCKER_CUSTOM_IMAGE_TAG}
++ARG NVIDIA_DRIVER_CAPABILITIES=all
 +
-+FROM ran-base-cuda:${DOCKER_CUSTOM_IMAGE_TAG} AS gnb-base
++FROM ran-base-cuda:${DOCKER_CUSTOM_BASE_IMAGE_TAG} AS gnb-base
 +FROM ran-build-cuda:${DOCKER_CUSTOM_IMAGE_TAG} AS gnb-build
 +
++
 +#start from scratch for target executable
-+FROM nvcr.io/nvidia/l4t-jetpack:r36.3.0 AS oai-gnb-cuda
++FROM $BASE_IMAGE AS oai-gnb-cuda
 +ARG BUILD_OPTION
 +ENV DEBIAN_FRONTEND=noninteractive
 +ENV TZ=Europe/Paris
++ARG BOOST_VERSION="1.83.0"
 +
 +RUN apt-get update && \
-+    DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes && \
-+    DEBIAN_FRONTEND=noninteractive apt-get install --yes \
++    apt-get upgrade --yes && \
++    apt-get install --yes \
 +        software-properties-common \
 +        procps \
 +        libsctp1 \
-+        libboost-chrono1.74.0 \
-+        libboost-date-time1.74.0 \
-+        libboost-filesystem1.74.0 \
-+        libboost-regex1.74.0 \
-+        libboost-serialization1.74.0 \
-+        libboost-thread1.74.0 \
-+        libboost-system1.74.0 \
-+        libboost-program-options1.74.0 \
++        libboost-chrono$BOOST_VERSION \
++        libboost-date-time$BOOST_VERSION \
++        libboost-filesystem$BOOST_VERSION \
++        libboost-regex$BOOST_VERSION \
++        libboost-serialization$BOOST_VERSION \
++        libboost-thread$BOOST_VERSION \
++        libboost-system$BOOST_VERSION \
++        libboost-program-options$BOOST_VERSION \
 +        tzdata \
 +        libblas3 \
 +        libconfig9 \
-+	    libforms2 \
++        libforms2 \
 +        openssl \
 +        net-tools \
 +        iperf \
@@ -558,190 +614,63 @@ index 0000000000..0f3221ec5d
 +        iproute2 \
 +        iputils-ping \
 +        gdb \
-+	gdbserver \
++        gdbserver \
 +        python3 \
 +        python3-six \
 +        python3-requests \
-+        libusb-1.0-0 && \
++        tensorrt \
++        libusb-1.0-0 \
++        libyaml-cpp-dev \
++        libzmq3-dev \
++        libcjson-dev && \
 +# if the --sanitize option was used to build, additional packages are required
 +    /bin/bash -c 'if [[ "$BUILD_OPTION" = "--sanitize" ]]; then DEBIAN_FRONTEND=noninteractive apt-get install --yes \
-+        #libasan5 \ # see below
++        libasan8 \
 +        libubsan1 \
 +        liblapacke; fi' && \
 +    apt-get clean -y && \
 +    rm -rf /var/lib/apt/lists/*
 +
-+# we select another compile (gcc-12) for compilation, requiring another libasan
-+# library version. Installing it above would install the wrong version. Hence,
-+# copy the right version from ran-build. When upgrading to Ubuntu24, install
-+# the correct one above!
-+# GM: in aarch64, we have version 6.0.0, not 8.0.0
-+COPY --from=gnb-build /usr/lib/aarch64-linux-gnu/libasan.so.6.0.0 /usr/lib/aarch64-linux-gnu/
-+
 +WORKDIR /opt/oai-gnb/bin
 +COPY --from=gnb-build \
 +    /oai-ran/cmake_targets/ran_build/build/nr-softmodem ./
 +COPY ./docker/scripts/gnb_entrypoint.sh ./entrypoint.sh
++COPY ./docker/scripts/check-prach-io.sh ./check-prach-io.sh
 +
 +COPY --from=gnb-build \
 +    /oai-ran/cmake_targets/ran_build/build/liboai_eth_transpro.so \
 +    /oai-ran/cmake_targets/ran_build/build/librfsimulator.so \
 +    /oai-ran/cmake_targets/ran_build/build/liboai_usrpdevif.so \
 +    /oai-ran/cmake_targets/ran_build/build/libcoding.so \
++    /oai-ran/cmake_targets/ran_build/build/libreceiver*.so \
 +    /oai-ran/cmake_targets/ran_build/build/libparams_libconfig.so \
 +    /oai-ran/cmake_targets/ran_build/build/libdfts.so \
 +    /oai-ran/cmake_targets/ran_build/build/libldpc*.so \
 +    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv.so \
 +    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv_ci.so \
++    /oai-ran/cmake_targets/ran_build/build/libparams_yaml.so \
++    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv_bearer.so \
++    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv_5Gue.so \
++    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv_rrc.so \
++    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv_o1.so \
++    /oai-ran/cmake_targets/ran_build/build/libvrtsim.so \
 +    /oai-ran/cmake_targets/ran_build/build/libnrscope.so \
 +    /oai-ran/cmake_targets/ran_build/build/libuescope.so \
++    /oai-ran/cmake_targets/ran_build/build/libdemapper*.so \
++    /oai-ran/cmake_targets/ran_build/build/libreceiver*.so \
++    #/oai-ran/cmake_targets/ran_build/build/libchn_emu.so \
++    #/oai-ran/cmake_targets/ran_build/build/libcir_zmq.so \
 +    /usr/local/lib/
++
++# to drop in incremental build results:
++#COPY ./override/lib/* /usr/local/lib/
 +
 +# Now we are copying from builder-image the UHD files.
 +COPY --from=gnb-base /usr/local/bin/uhd_find_devices /usr/local/bin
-+COPY --from=gnb-base /usr/local/lib/libuhd.so.4.4.0 /usr/local/lib
++COPY --from=gnb-base /usr/local/lib/libuhd.so.4.8.0 /usr/local/lib
 +COPY --from=gnb-base /usr/local/lib/uhd/utils/uhd_images_downloader.py /opt/oai-gnb/bin
-+
-+RUN /bin/bash -c "ln -s /usr/local/lib/liboai_usrpdevif.so /usr/local/lib/liboai_device.so" && \
-+    ldconfig && \
-+    echo "---- ldd on nr-softmodem ----" && \
-+    ldd /opt/oai-gnb/bin/nr-softmodem && \
-+    echo "---- ldd on shared libraries ----" && \
-+    ldd /usr/local/lib/liboai_eth_transpro.so \
-+        /usr/local/lib/librfsimulator.so \
-+        /usr/local/lib/liboai_usrpdevif.so \
-+        /usr/local/lib/libcoding.so \
-+        /usr/local/lib/libparams_libconfig.so \
-+        /usr/local/lib/libdfts.so \
-+        /usr/local/lib/libldpc*.so \
-+        /usr/local/lib/libtelnetsrv.so \
-+        /usr/local/lib/libtelnetsrv_ci.so \
-+        /usr/local/lib/libnrscope.so \
-+        /usr/local/lib/libuescope.so \
-+        /usr/local/lib/libuhd.so.4.4.0
-+
-+WORKDIR /opt/oai-gnb
-+#EXPOSE 2152/udp  # S1U, GTP/UDP
-+#EXPOSE 22100/tcp # ?
-+#EXPOSE 36412/udp # S1C, SCTP/UDP
-+#EXPOSE 36422/udp # X2C, SCTP/UDP
-+#EXPOSE 50000/udp # IF5 / ORI (control)
-+#EXPOSE 50001/udp # IF5 / ECPRI (data)
-+
-+COPY --from=gnb-base /tini /tini
-+ENTRYPOINT ["/tini", "-v", "--", "/opt/oai-gnb/bin/entrypoint.sh"]
-+CMD ["/opt/oai-gnb/bin/nr-softmodem", "-O", "/opt/oai-gnb/etc/gnb.conf"]
-diff --git a/docker/Dockerfile.gNB.ubuntu22.aarch64 b/docker/Dockerfile.gNB.ubuntu22.aarch64
-new file mode 100644
-index 0000000000..08c1d0f0fa
---- /dev/null
-+++ b/docker/Dockerfile.gNB.ubuntu22.aarch64
-@@ -0,0 +1,138 @@
-+#/*
-+# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
-+# * contributor license agreements.  See the NOTICE file distributed with
-+# * this work for additional information regarding copyright ownership.
-+# * The OpenAirInterface Software Alliance licenses this file to You under
-+# * the OAI Public License, Version 1.1  (the "License"); you may not use this file
-+# * except in compliance with the License.
-+# * You may obtain a copy of the License at
-+# *
-+# *      http://www.openairinterface.org/?page_id=698
-+# *
-+# * Unless required by applicable law or agreed to in writing, software
-+# * distributed under the License is distributed on an "AS IS" BASIS,
-+# * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+# * See the License for the specific language governing permissions and
-+# * limitations under the License.
-+# *-------------------------------------------------------------------------------
-+# * For more information about the OpenAirInterface (OAI) Software Alliance:
-+# *      contact@openairinterface.org
-+# */
-+#---------------------------------------------------------------------
-+#
-+# Dockerfile for the Open-Air-Interface BUILD service
-+#   Valid for Ubuntu20.04
-+#
-+#---------------------------------------------------------------------
-+
-+FROM ran-base:latest AS gnb-base
-+
-+FROM ran-build:latest AS gnb-build
-+
-+
-+#start from scratch for target executable
-+FROM ubuntu:jammy AS oai-gnb
-+ARG BUILD_OPTION
-+ENV DEBIAN_FRONTEND=noninteractive
-+ENV TZ=Europe/Paris
-+
-+RUN apt-get update && \
-+    DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes && \
-+    DEBIAN_FRONTEND=noninteractive apt-get install --yes \
-+        software-properties-common \
-+        procps \
-+        libsctp1 \
-+        libboost-chrono1.74.0 \
-+        libboost-date-time1.74.0 \
-+        libboost-filesystem1.74.0 \
-+        libboost-regex1.74.0 \
-+        libboost-serialization1.74.0 \
-+        libboost-thread1.74.0 \
-+        libboost-system1.74.0 \
-+        libboost-program-options1.74.0 \
-+        tzdata \
-+        libblas3 \
-+        libconfig9 \
-+	    libforms2 \
-+        openssl \
-+        net-tools \
-+        iperf \
-+        iperf3 \
-+        iproute2 \
-+        iputils-ping \
-+        gdb \
-+        python3 \
-+        python3-six \
-+        python3-requests \
-+        libusb-1.0-0 && \
-+# if the --sanitize option was used to build, additional packages are required
-+    /bin/bash -c 'if [[ "$BUILD_OPTION" = "--sanitize" ]]; then DEBIAN_FRONTEND=noninteractive apt-get install --yes \
-+        #libasan5 \ # see below
-+        libubsan1 \
-+        liblapacke; fi' && \
-+    apt-get clean -y && \
-+    rm -rf /var/lib/apt/lists/*
-+
-+# we select another compile (gcc-12) for compilation, requiring another libasan
-+# library version. Installing it above would install the wrong version. Hence,
-+# copy the right version from ran-build. When upgrading to Ubuntu24, install
-+# the correct one above!
-+# GM: in aarch64, we have version 6.0.0, not 8.0.0
-+COPY --from=gnb-build /usr/lib/aarch64-linux-gnu/libasan.so.6.0.0 /usr/lib/aarch64-linux-gnu/
-+
-+WORKDIR /opt/oai-gnb/bin
-+COPY --from=gnb-build \
-+    /oai-ran/cmake_targets/ran_build/build/nr-softmodem ./
-+COPY ./docker/scripts/gnb_entrypoint.sh ./entrypoint.sh
-+
-+COPY --from=gnb-build \
-+    /oai-ran/cmake_targets/ran_build/build/liboai_eth_transpro.so \
-+    /oai-ran/cmake_targets/ran_build/build/librfsimulator.so \
-+    /oai-ran/cmake_targets/ran_build/build/liboai_usrpdevif.so \
-+    /oai-ran/cmake_targets/ran_build/build/libcoding.so \
-+    /oai-ran/cmake_targets/ran_build/build/libparams_libconfig.so \
-+    /oai-ran/cmake_targets/ran_build/build/libdfts.so \
-+    /oai-ran/cmake_targets/ran_build/build/libldpc*.so \
-+    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv.so \
-+    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv_ci.so \
-+    /oai-ran/cmake_targets/ran_build/build/libnrscope.so \
-+    /oai-ran/cmake_targets/ran_build/build/libuescope.so \
-+    /usr/local/lib/
-+
-+# Now we are copying from builder-image the UHD files.
-+COPY --from=gnb-base /usr/local/bin/uhd_find_devices /usr/local/bin
-+COPY --from=gnb-base /usr/local/lib/libuhd.so.4.4.0 /usr/local/lib
-+COPY --from=gnb-base /usr/local/lib/uhd/utils/uhd_images_downloader.py /opt/oai-gnb/bin
++## Copy E2 SM models
++COPY --from=gnb-build /usr/local/lib/flexric /usr/local/lib/flexric
 +
 +# predownload the USRP firmware images
 +RUN python3 /opt/oai-gnb/bin/uhd_images_downloader.py
@@ -762,7 +691,7 @@ index 0000000000..08c1d0f0fa
 +        /usr/local/lib/libtelnetsrv_ci.so \
 +        /usr/local/lib/libnrscope.so \
 +        /usr/local/lib/libuescope.so \
-+        /usr/local/lib/libuhd.so.4.4.0
++        /usr/local/lib/libuhd.so.4.8.0
 +
 +WORKDIR /opt/oai-gnb
 +#EXPOSE 2152/udp  # S1U, GTP/UDP
@@ -774,13 +703,13 @@ index 0000000000..08c1d0f0fa
 +
 +COPY --from=gnb-base /tini /tini
 +ENTRYPOINT ["/tini", "-v", "--", "/opt/oai-gnb/bin/entrypoint.sh"]
-+CMD ["/opt/oai-gnb/bin/nr-softmodem", "-O", "/opt/oai-gnb/etc/gnb.conf"]
-diff --git a/docker/Dockerfile.nrUE.cuda.aarch64 b/docker/Dockerfile.nrUE.cuda.aarch64
++CMD ["/opt/oai-gnb/bin/nr-softmodem"]
+diff --git a/docker/Dockerfile.nrUE.ubuntu.cuda b/docker/Dockerfile.nrUE.ubuntu.cuda
 new file mode 100644
-index 0000000000..6b8767083c
+index 0000000000..5cdb8fc815
 --- /dev/null
-+++ b/docker/Dockerfile.nrUE.cuda.aarch64
-@@ -0,0 +1,136 @@
++++ b/docker/Dockerfile.nrUE.ubuntu.cuda
+@@ -0,0 +1,141 @@
 +#/*
 +# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
 +# * contributor license agreements.  See the NOTICE file distributed with
@@ -804,44 +733,48 @@ index 0000000000..6b8767083c
 +#---------------------------------------------------------------------
 +#
 +# Dockerfile for the Open-Air-Interface BUILD service
-+#   Valid for Ubuntu 22.04
++#   Valid for Ubuntu 24.04
 +#
 +#---------------------------------------------------------------------
 +
++ARG BASE_IMAGE=nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04
 +ARG DOCKER_CUSTOM_IMAGE_TAG=latest
++ARG NVIDIA_DRIVER_CAPABILITIES=all
 +
 +FROM ran-base-cuda:${DOCKER_CUSTOM_IMAGE_TAG} AS nr-ue-base
 +FROM ran-build-cuda:${DOCKER_CUSTOM_IMAGE_TAG} AS nr-ue-build
 +
++
 +#start from scratch for target executable
-+FROM nvcr.io/nvidia/l4t-jetpack:r36.3.0 AS oai-nr-ue-cuda
++FROM $BASE_IMAGE AS oai-nr-ue-cuda
 +ARG BUILD_OPTION
 +ENV DEBIAN_FRONTEND=noninteractive
 +ENV TZ=Europe/Paris
++ARG BOOST_VERSION="1.83.0"
 +
 +RUN apt-get update && \
-+    DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes && \
-+    DEBIAN_FRONTEND=noninteractive apt-get install --yes \
++    apt-get upgrade --yes && \
++    apt-get install --yes \
 +        software-properties-common \
 +        procps \
 +        libsctp1 \
-+        libboost-chrono1.74.0 \
-+        libboost-date-time1.74.0 \
-+        libboost-filesystem1.74.0 \
-+        libboost-regex1.74.0 \
-+        libboost-serialization1.74.0 \
-+        libboost-thread1.74.0 \
-+        libboost-system1.74.0 \
-+        libboost-program-options1.74.0 \
++        libboost-chrono$BOOST_VERSION \
++        libboost-date-time$BOOST_VERSION \
++        libboost-filesystem$BOOST_VERSION \
++        libboost-regex$BOOST_VERSION \
++        libboost-serialization$BOOST_VERSION \
++        libboost-thread$BOOST_VERSION \
++        libboost-system$BOOST_VERSION \
++        libboost-program-options$BOOST_VERSION \
 +        tzdata \
 +        liblapacke \
 +        libblas3 \
 +        libconfig9 \
-+	    libforms2 \
++        libforms2 \
 +        openssl \
 +        net-tools \
 +        gdb \
-+	gdbserver \
++        gdbserver \
 +        python3 \
 +        python3-six \
 +        python3-requests \
@@ -849,19 +782,14 @@ index 0000000000..6b8767083c
 +        iputils-ping \
 +        iproute2 \
 +        iperf3 \
-+        iperf && \
++        iperf \
++        libyaml-cpp-dev && \
 +# if the --sanitize option was used to build, additional packages are required
 +    /bin/bash -c 'if [[ "$BUILD_OPTION" = "--sanitize" ]]; then DEBIAN_FRONTEND=noninteractive apt-get install --yes \
-+        #libasan5 \ # see below
++        libasan8 \
 +        libubsan1; fi' && \
 +    apt-get clean -y && \
 +    rm -rf /var/lib/apt/lists/*
-+
-+# we select another compile (gcc-12) for compilation, requiring another libasan
-+# library version. Installing it above would install the wrong version. Hence,
-+# copy the right version from ran-build. When upgrading to Ubuntu24, install
-+# the correct one above!
-+COPY --from=nr-ue-build /usr/lib/aarch64-linux-gnu/libasan.so.6.0.0 /usr/lib/aarch64-linux-gnu/
 +
 +WORKDIR /opt/oai-nr-ue/bin
 +COPY --from=nr-ue-build \
@@ -876,19 +804,25 @@ index 0000000000..6b8767083c
 +    /oai-ran/cmake_targets/ran_build/build/librfsimulator.so \
 +    /oai-ran/cmake_targets/ran_build/build/liboai_usrpdevif.so \
 +    /oai-ran/cmake_targets/ran_build/build/libcoding.so \
++    /oai-ran/cmake_targets/ran_build/build/libreceiver*.so \
 +    /oai-ran/cmake_targets/ran_build/build/libparams_libconfig.so \
 +    /oai-ran/cmake_targets/ran_build/build/libdfts.so \
 +    /oai-ran/cmake_targets/ran_build/build/libldpc*.so \
 +    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv.so \
 +    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv_ciUE.so \
 +    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv_5Gue.so \
++    /oai-ran/cmake_targets/ran_build/build/libparams_yaml.so \
++    /oai-ran/cmake_targets/ran_build/build/libvrtsim.so \
 +    /oai-ran/cmake_targets/ran_build/build/libnrscope.so \
 +    /oai-ran/cmake_targets/ran_build/build/libuescope.so \
 +    /usr/local/lib/
 +
++# to drop in incremental build results:
++#COPY ./override/lib/* /usr/local/lib/
++
 +# Now we are copying from builder-image the UHD files.
 +COPY --from=nr-ue-base /usr/local/bin/uhd_find_devices /usr/local/bin
-+COPY --from=nr-ue-base /usr/local/lib/libuhd.so.4.4.0 /usr/local/lib
++COPY --from=nr-ue-base /usr/local/lib/libuhd.so.4.8.0 /usr/local/lib
 +COPY --from=nr-ue-base /usr/local/lib/uhd/utils/uhd_images_downloader.py /opt/oai-nr-ue/bin
 +
 +# predownload the USRP firmware images
@@ -911,173 +845,1352 @@ index 0000000000..6b8767083c
 +        /usr/local/lib/libtelnetsrv_5Gue.so \
 +        /usr/local/lib/libnrscope.so \
 +        /usr/local/lib/libuescope.so \
-+        /usr/local/lib/libuhd.so.4.4.0
++        /usr/local/lib/libuhd.so.4.8.0
 +
 +WORKDIR /opt/oai-nr-ue
 +COPY --from=nr-ue-base /tini /tini
-+CMD ["/opt/oai-nr-ue/bin/nr-uesoftmodem", "-O", "/opt/oai-nr-ue/etc/nr-ue.conf"]
++CMD ["/opt/oai-nr-ue/bin/nr-uesoftmodem"]
 +ENTRYPOINT ["/tini", "-v", "--", "/opt/oai-nr-ue/bin/entrypoint.sh"]
-diff --git a/docker/Dockerfile.nrUE.ubuntu22.aarch64 b/docker/Dockerfile.nrUE.ubuntu22.aarch64
+diff --git a/executables/nr-gnb.c b/executables/nr-gnb.c
+index 24870544b8..0eac7b14d6 100644
+--- a/executables/nr-gnb.c
++++ b/executables/nr-gnb.c
+@@ -327,7 +327,8 @@ void init_gNB_Tpool(int inst)
+   gNB = RC.gNB[inst];
+   gNB_L1_proc_t *proc = &gNB->proc;
+   // PUSCH symbols per thread need to be calculated by how many threads we have
+-  gNB->num_pusch_symbols_per_thread = 1;
++  if (gNB->num_pusch_symbols_per_thread == 0)
++    gNB->num_pusch_symbols_per_thread = 1;
+   // ULSCH decoding threadpool
+   initTpool(get_softmodem_params()->threadPoolConfig, &gNB->threadPool, cpumeas(CPUMEAS_GETSTATE));
+   // ULSCH decoder result FIFO
+diff --git a/executables/nr-ru.c b/executables/nr-ru.c
+index de3a4b7875..582c4568bc 100644
+--- a/executables/nr-ru.c
++++ b/executables/nr-ru.c
+@@ -18,6 +18,11 @@
+  * For more information about the OpenAirInterface (OAI) Software Alliance:
+  *      contact@openairinterface.org
+  */
++ //#define CHANNEL_EMULATION_RX
++ //#define CHANNEL_EMULATION_TX
++ // #define DUMP_DATA_RX
++ // #define DUMP_DATA_TX
++ // #define PRINT_TIMES
+ 
+ #define _GNU_SOURCE
+ #include <stdio.h>
+@@ -28,6 +33,9 @@
+ #include <linux/sched.h>
+ #include <sys/sysinfo.h>
+ #include <math.h>
++#ifdef PRINT_TIMES
++#include <time.h>
++#endif
+ 
+ #include "common/utils/nr/nr_common.h"
+ #include "common/utils/assertions.h"
+@@ -292,7 +300,7 @@ void fh_if5_south_in(RU_t *ru,
+                      int *tti) {
+   NR_DL_FRAME_PARMS *fp = ru->nr_frame_parms;
+   RU_proc_t *proc = &ru->proc;
+-  VCD_SIGNAL_DUMPER_DUMP_FUNCTION_BY_NAME( VCD_SIGNAL_DUMPER_FUNCTIONS_RECV_IF5, 1 );   
++  VCD_SIGNAL_DUMPER_DUMP_FUNCTION_BY_NAME( VCD_SIGNAL_DUMPER_FUNCTIONS_RECV_IF5, 1 );
+   start_meas(&ru->rx_fhaul);
+ 
+   ru->ifdevice.trx_read_func2(&ru->ifdevice, &proc->timestamp_rx, NULL, fp->get_samples_per_slot(*tti, fp));
+@@ -561,6 +569,65 @@ void fh_if4p5_north_out(RU_t *ru) {
+   stop_meas(&ru->tx_fhaul);
+ }
+ 
++#if defined(DUMP_DATA_RX) || defined(DUMP_DATA_TX)
++static bool dump_data(RU_t *ru, int slot, const char *filename, NR_DL_FRAME_PARMS *fp, void *p[], const char *direction, int timing_offset)
++{
++  // Read cyclic prefix length and FFT size
++  uint16_t fft_size = fp->ofdm_symbol_size;
++  uint16_t cp_length0 = fp->nb_prefix_samples0;
++  uint16_t cp_length = fp->nb_prefix_samples;
++  int samples_per_frame = fp->samples_per_frame;
++  int sample_offset = fp->get_samples_slot_timestamp(slot, fp, 0);
++  int nb;
++  if (strcmp(direction, "rx") == 0) {
++    nb = ru->nb_rx;
++  } else {
++    nb = ru->nb_tx;
++  }
++  int samples_per_slot = fp->get_samples_per_slot(slot, fp);
++
++  bool dump_data = false;
++  for (int i = 0; i < nb; i++) {
++    const c16_t *p_i = (const c16_t *)p[i];
++    for (int j = 0; j < 100; j++) {
++      if ( (p_i[j].r != 0) || (p_i[j].i != 0)) {
++        dump_data = true;
++        break;
++      }
++    }
++  }
++  if (dump_data) {
++    FILE *dump_file = fopen(filename, "wb");
++    if (dump_file) {
++      void *data = NULL;
++      if (strcmp(direction, "rx") == 0) {
++        data = (void*)(ru->common.rxdata[0]);
++      } else {
++        data = (void*)(ru->common.txdata[0]);
++      }
++      // Apply timing offset and symbol alignment
++      fwrite(&samples_per_slot, sizeof(int), 1, dump_file);
++      fwrite(&nb, sizeof(int), 1, dump_file);
++      fwrite(&fft_size, sizeof(uint16_t), 1, dump_file);
++      fwrite(&cp_length0, sizeof(uint16_t), 1, dump_file);
++      fwrite(&cp_length, sizeof(uint16_t), 1, dump_file);
++      fwrite(&timing_offset, sizeof(int), 1, dump_file);
++      fwrite(&samples_per_frame, sizeof(int), 1, dump_file);
++      fwrite(&sample_offset, sizeof(int), 1, dump_file);
++
++      for (int ant = 0; ant < nb; ant++) {
++        fwrite(data, sizeof(int32_t), samples_per_frame, dump_file);
++      }
++      fclose(dump_file);
++    }
++  }
++
++  return dump_data;
++}
++#endif
++
++
++
+ static void rx_rf(RU_t *ru, int *frame, int *slot)
+ {
+   RU_proc_t *proc = &ru->proc;
+@@ -583,6 +650,7 @@ static void rx_rf(RU_t *ru, int *frame, int *slot)
+   unsigned int rxs;
+   rxs = ru->rfdevice.trx_read_func(&ru->rfdevice, &ts, rxp, samples_per_slot, nb);
+ 
++
+   VCD_SIGNAL_DUMPER_DUMP_FUNCTION_BY_NAME( VCD_SIGNAL_DUMPER_FUNCTIONS_TRX_READ, 0 );
+   proc->timestamp_rx = ts-ru->ts_offset;
+ 
+@@ -602,12 +670,34 @@ static void rx_rf(RU_t *ru, int *frame, int *slot)
+     }
+   }
+ 
++  // Dump the received data before channel emulation
++  #ifdef DUMP_DATA_RX
++  const bool dump = dump_data(ru, *slot, "/tmp/rxdata_dump_input.bin", fp, rxp, "rx", ru->N_TA_offset);
++  #endif
++
++  // Emulates the channel
++  #ifdef CHANNEL_EMULATION_RX
++  // Offset in the ru->common.rxdata buffer from which the slot samples start
++  const int data_offset = fp->get_samples_slot_timestamp(*slot, fp, 0) - ru->N_TA_offset;
++  // Read the channel impulse response from the ZMQ interface
++  const cir_data_t *cir_data = cir_zmq_interface.read();
++  chn_emu_interface.compute(ru, *slot, fp, "rx", data_offset, cir_data->taps,
++                            cir_data->tap_indices, cir_data->noise_std);
++  #endif
++
++  // Dump the received data after channel emulation
++  #ifdef DUMP_DATA_RX
++  if (dump) {
++    dump_data(ru, *slot, "/tmp/rxdata_dump_output.bin", fp, rxp, "rx", ru->N_TA_offset);
++  }
++  #endif
++
+   // compute system frame number (SFN) according to O-RAN-WG4-CUS.0-v02.00 (using alpha=beta=0)
+   //  this assumes that the USRP has been synchronized to the GPS time
+   //  OAI uses timestamps in sample time stored in int64_t, but it will fit in double precision for many years to come.
+   double gps_sec = ((double)ts) / cfg->sample_rate;
+ 
+-  // in fact the following line is the same as long as the timestamp_rx is synchronized to GPS. 
++  // in fact the following line is the same as long as the timestamp_rx is synchronized to GPS.
+   proc->frame_rx    = (proc->timestamp_rx / (fp->samples_per_subframe*10))&1023;
+   proc->tti_rx = fp->get_slot_from_timestamp(proc->timestamp_rx,fp);
+   // synchronize first reception to frame 0 subframe 0
+@@ -788,6 +878,27 @@ void tx_rf(RU_t *ru, int frame,int slot, uint64_t timestamp)
+   for (int i = 0; i < nt; i++)
+     txp[i] = (void *)&ru->common.txdata[i][fp->get_samples_slot_timestamp(slot, fp, 0)] - sf_extension * sizeof(int32_t);
+ 
++  #ifdef DUMP_DATA_TX
++  const bool dump = dump_data(ru, slot, "/tmp/txdata_dump_input.bin", fp, txp, "tx", sf_extension);
++  #endif
++
++  // Emulates the channel
++  #ifdef CHANNEL_EMULATION_TX
++  // Offset in the ru->common.txdata buffer from which the slot samples start
++  const int data_offset = fp->get_samples_slot_timestamp(slot, fp, 0) - sf_extension;
++  // Read the channel impulse response from the ZMQ interface
++  const cir_data_t *cir_data = cir_zmq_interface.read();
++  chn_emu_interface.compute(ru, slot, fp, "tx", data_offset, cir_data->taps,
++                            cir_data->tap_indices, cir_data->noise_std);
++  #endif
++
++  // Dump the transmitted data after channel emulation
++  #ifdef DUMP_DATA_TX
++  if (dump) {
++    dump_data(ru, slot, "/tmp/txdata_dump_output.bin", fp, txp, "tx", sf_extension);
++  }
++  #endif
++
+   VCD_SIGNAL_DUMPER_DUMP_VARIABLE_BY_NAME(VCD_SIGNAL_DUMPER_VARIABLES_TRX_TST, (timestamp + ru->ts_offset) & 0xffffffff);
+   VCD_SIGNAL_DUMPER_DUMP_FUNCTION_BY_NAME(VCD_SIGNAL_DUMPER_FUNCTIONS_TRX_WRITE, 1);
+   // prepare tx buffer pointers
+@@ -858,7 +969,7 @@ static void fill_rf_config(RU_t *ru, char *rf_config_file)
+     }
+ 
+     cfg->tx_gain[i] = ru->att_tx;
+-    LOG_I(PHY, "Channel %d: setting tx_gain offset %.0f, tx_freq %.0f Hz\n", 
++    LOG_I(PHY, "Channel %d: setting tx_gain offset %.0f, tx_freq %.0f Hz\n",
+           i, cfg->tx_gain[i],cfg->tx_freq[i]);
+   }
+ 
+@@ -1131,7 +1242,21 @@ void *ru_thread(void *param)
+   struct timespec slot_start;
+   clock_gettime(CLOCK_MONOTONIC, &slot_start);
+ 
++  #ifdef PRINT_TIMES
++  // Variables for average timing calculation
++  long total_duration_ns = 0;
++  int iteration_count = 0;
++  const int TIMING_WINDOW = 1000;
++  #endif
++
++
+   while (!oai_exit) {
++
++    #ifdef PRINT_TIMES
++    struct timespec loop_start, loop_end;
++    clock_gettime(CLOCK_MONOTONIC, &loop_start);
++    #endif
++
+     if (slot==(fp->slots_per_frame-1)) {
+       slot=0;
+       frame++;
+@@ -1242,6 +1367,28 @@ void *ru_thread(void *param)
+                                          .slot_rx = proc->tti_rx,
+                                          .timestamp_tx = proc->timestamp_tx};
+     pushNotifiedFIFO(&gNB->L1_tx_out, resTx);
++
++    #ifdef PRINT_TIMES
++    clock_gettime(CLOCK_MONOTONIC, &loop_end);
++    long loop_duration_ns = (loop_end.tv_sec - loop_start.tv_sec) * 1000000000L + (loop_end.tv_nsec - loop_start.tv_nsec);
++
++    // Accumulate timing data
++    total_duration_ns += loop_duration_ns;
++    iteration_count++;
++
++    // Print average every 1000 iterations
++    if (iteration_count == TIMING_WINDOW) {
++      double average_duration_ns = (double)total_duration_ns / TIMING_WINDOW;
++      double average_duration_ms = average_duration_ns / 1000000.0;
++      printf("RU loop average over %d iterations: %.3f ms\n", TIMING_WINDOW, average_duration_ms);
++      fflush(stdout);
++
++      // Reset counters for next window
++      total_duration_ns = 0;
++      iteration_count = 0;
++    }
++    #endif
++
+   }
+ 
+   ru_thread_status = 0;
+@@ -1482,7 +1629,7 @@ void set_function_spec_param(RU_t *ru)
+         ru->do_prach             = 0;                       // no prach processing in RU
+         ru->feprx                = nr_fep_tp;     // this is frequency-shift + DFTs
+         ru->feptx_ofdm           = nr_feptx_tp;             // this is fep with idft and precoding
+-        ru->feptx_prec           = NULL;                    
++        ru->feptx_prec           = NULL;
+         ru->fh_north_in          = NULL;                    // no incoming fronthaul from north
+         ru->fh_north_out         = NULL;                    // no outgoing fronthaul to north
+         ru->nr_start_if          = NULL;                    // no if interface
+diff --git a/executables/nr-softmodem-common.h b/executables/nr-softmodem-common.h
+index 61823d43cd..8eb9b30590 100644
+--- a/executables/nr-softmodem-common.h
++++ b/executables/nr-softmodem-common.h
+@@ -96,6 +96,7 @@
+ #define CONFIG_HLP_TELN          "Start embedded telnet server \n"
+ #define CONFIG_HLP_SNR           "Set average SNR in dB (for --siml1 option)\n"
+ #define CONFIG_HLP_NOS1          "Disable s1 interface\n"
++#define CONFIG_HLP_NUMTAPS       "Set the number of channel taps for CIR emulation (default: 3)\n"
+ 
+ /*--------------------------------------------------------------------------------------------------------------------------------*/
+ /*                                            command line parameters for LOG utility                                             */
+diff --git a/executables/nr-softmodem.c b/executables/nr-softmodem.c
+index d8df770cb8..6ad9f9aa38 100644
+--- a/executables/nr-softmodem.c
++++ b/executables/nr-softmodem.c
+@@ -87,6 +87,8 @@ unsigned short config_frames[4] = {2,9,11,13};
+ #include "x2ap_eNB.h"
+ #include "openair1/SCHED_NR/sched_nr.h"
+ #include "openair2/SDAP/nr_sdap/nr_sdap.h"
++#include "plugins/common/src/plugins.h"
++// #include "plugins/neural_receiver/nr_receiver_extern.h"  // Disabled - plugin not active
+ 
+ pthread_cond_t nfapi_sync_cond;
+ pthread_mutex_t nfapi_sync_mutex;
+@@ -103,6 +105,7 @@ unsigned int mmapped_dma=0;
+ uint64_t downlink_frequency[MAX_NUM_CCs][4];
+ int32_t uplink_frequency_offset[MAX_NUM_CCs][4];
+ char *uecap_file;
++uint32_t num_taps = 3; // Default value for channel emulation, can be configured via command line
+ 
+ runmode_t mode = normal_txrx;
+ 
+@@ -187,7 +190,7 @@ void exit_function(const char *file, const char *function, const int line, const
+ 
+ static int create_gNB_tasks(ngran_node_t node_type, configmodule_interface_t *cfg)
+ {
+-  uint32_t                        gnb_nb = RC.nb_nr_inst; 
++  uint32_t                        gnb_nb = RC.nb_nr_inst;
+   uint32_t                        gnb_id_start = 0;
+   uint32_t                        gnb_id_end = gnb_id_start + gnb_nb;
+   LOG_D(GNB_APP, "%s(gnb_nb:%d)\n", __FUNCTION__, gnb_nb);
+@@ -294,7 +297,7 @@ static int create_gNB_tasks(ngran_node_t node_type, configmodule_interface_t *cf
+       return -1;
+     }
+ 
+-    //Use check on x2ap to consider the NSA scenario 
++    //Use check on x2ap to consider the NSA scenario
+     if((is_x2ap_enabled() || IS_SA_MODE(get_softmodem_params())) && (node_type != ngran_gNB_CUCP)) {
+       if (itti_create_task (TASK_GTPV1_U, &gtpv1uTask, NULL) < 0) {
+         LOG_E(GTPU, "Create task for GTPV1U failed\n");
+@@ -538,6 +541,9 @@ int main( int argc, char **argv ) {
+     exit(-1);
+   }
+ 
++  // Validate num_taps parameter
++  AssertFatal(num_taps > 0, "num_taps must be greater than 0, got %d\n", num_taps);
++
+   if (!has_cap_sys_nice())
+     LOG_W(UTIL,
+           "no SYS_NICE capability: cannot set thread priority and affinity, consider running with sudo for optimum performance\n");
+@@ -633,22 +639,21 @@ int main( int argc, char **argv ) {
+     for (ru_id=0; ru_id<RC.nb_RU; ru_id++) {
+       RC.ru[ru_id]->rf_map.card=0;
+       RC.ru[ru_id]->rf_map.chain=CC_id+chain_offset;
+-      if (ru_id==0) sl_ahead = RC.ru[ru_id]->sl_ahead;	
++      if (ru_id==0) sl_ahead = RC.ru[ru_id]->sl_ahead;
+       else AssertFatal(RC.ru[ru_id]->sl_ahead != RC.ru[0]->sl_ahead,"RU %d has different sl_ahead %d than RU 0 %d\n",ru_id,RC.ru[ru_id]->sl_ahead,RC.ru[0]->sl_ahead);
+     }
+-    
++
+   }
+ 
+   config_sync_var=0;
+ 
+-
+ #ifdef E2_AGENT
+ 
+ //////////////////////////////////
+ //////////////////////////////////
+ //// Init the E2 Agent
+ 
+-  // OAI Wrapper 
++  // OAI Wrapper
+   e2_agent_args_t oai_args = RCconfig_NR_E2agent();
+ 
+   if (oai_args.enabled) {
+diff --git a/executables/nr-softmodem.h b/executables/nr-softmodem.h
+index ecbf5d8759..a301a94740 100644
+--- a/executables/nr-softmodem.h
++++ b/executables/nr-softmodem.h
+@@ -27,6 +27,7 @@
+   {"U" ,                    CONFIG_HLP_ULBM_PHYTEST,   0,                .u64ptr=&ulsch_slot_bitmap,          .defintval=0,                     TYPE_UINT64, 0},        \
+   {"usrp-tx-thread-config", CONFIG_HLP_USRP_THREAD,    0,                .iptr=&usrp_tx_thread,               .defstrval=0,                     TYPE_INT,    0},        \
+   {"uecap_file",            CONFIG_HLP_UECAP_FILE,     0,                .strptr=&uecap_file,                 .defstrval="./uecap_ports1.xml",  TYPE_STRING, 0},        \
++  {"num-taps",              CONFIG_HLP_NUMTAPS,        0,                .uptr=&num_taps,                     .defintval=3,                     TYPE_UINT,   0},        \
+ }
+ // clang-format on
+ 
+@@ -39,6 +40,7 @@ extern uint32_t target_ul_bw;
+ extern uint64_t dlsch_slot_bitmap;
+ extern uint64_t ulsch_slot_bitmap;
+ extern char *uecap_file;
++extern uint32_t num_taps;
+ 
+ // In nr-gnb.c
+ extern void init_gNB();
+diff --git a/executables/nr-uesoftmodem.c b/executables/nr-uesoftmodem.c
+index 8b331e4976..f3b4a0ebfa 100644
+--- a/executables/nr-uesoftmodem.c
++++ b/executables/nr-uesoftmodem.c
+@@ -88,6 +88,7 @@ unsigned short config_frames[4] = {2,9,11,13};
+ #include "nr_nas_msg.h"
+ #include <openair1/PHY/MODULATION/nr_modulation.h>
+ #include "openair2/GNB_APP/gnb_paramdef.h"
++#include "plugins/common/src/plugins.h"
+ #include "actor.h"
+ 
+ THREAD_STRUCT thread_struct;
+@@ -377,6 +378,22 @@ int NB_UE_INST = 1;
+ configmodule_interface_t *uniqCfg = NULL;
+ nrLDPC_coding_interface_t nrLDPC_coding_interface = {0};
+ 
++void threadinitTpool(tpool_t* t);
++extern void (*initThreadHook)();
++static void (*prev_initThreadHook)() = NULL;
++
++void worker_thread_init() {
++    if (prev_initThreadHook)
++        prev_initThreadHook();
++
++    if (nrLDPC_coding_interface.nrLDPC_coding_threadinit)
++        nrLDPC_coding_interface.nrLDPC_coding_threadinit();
++
++    // todo: decided what/which plugins are linked to uesoftmodem vs. just softmodem
++    worker_thread_plugin_init();
++
++}
++
+ int main(int argc, char **argv)
+ {
+   start_background_system();
+@@ -418,6 +435,14 @@ int main(int argc, char **argv)
+   int ret_loader = load_nrLDPC_coding_interface(NULL, &nrLDPC_coding_interface);
+   AssertFatal(ret_loader == 0, "error loading LDPC library\n");
+ 
++  // todo: decided what/which plugins are linked to uesoftmodem vs. just softmodem
++  init_plugins();
++  printf("\nInitialized plugins\n\n");
++
++  // now everyting is initialized for worker thread modules
++  prev_initThreadHook = initThreadHook;
++  initThreadHook = &worker_thread_init;
++
+   if (ouput_vcd) {
+     vcd_signal_dumper_init("/tmp/openair_dump_nrUE.vcd");
+   }
+@@ -566,6 +591,8 @@ int main(int argc, char **argv)
+   // wait for end of program
+   printf("TYPE <CTRL-C> TO TERMINATE\n");
+ 
++  threadinitTpool(&nrUE_params.Tpool);
++
+   // Sleep a while before checking all parameters have been used
+   // Some are used directly in external threads, asynchronously
+   sleep(2);
+@@ -608,6 +635,10 @@ int main(int argc, char **argv)
+ 
+   free_nrLDPC_coding_interface(&nrLDPC_coding_interface);
+ 
++  // todo: decided what/which plugins are linked to uesoftmodem vs. just softmodem
++  free_plugins();
++
++
+   time_manager_finish();
+ 
+   free(pckg);
+diff --git a/openair1/PHY/CODING/CMakeLists.txt b/openair1/PHY/CODING/CMakeLists.txt
+index 5b7508fc29..2f2934d419 100644
+--- a/openair1/PHY/CODING/CMakeLists.txt
++++ b/openair1/PHY/CODING/CMakeLists.txt
+@@ -32,40 +32,7 @@ add_dependencies(nr_ulschsim ldpc ldpc_orig)
+ add_dependencies(nr_dlsim ldpc ldpc_orig)
+ add_dependencies(nr_dlschsim ldpc ldpc_orig)
+ 
+-##############################################
+-# Base CUDA setting
+-##############################################
+-
+-add_boolean_option(ENABLE_LDPC_CUDA OFF "Build support for CUDA" OFF)
+-if (ENABLE_LDPC_CUDA)
+-  find_package(CUDA REQUIRED)
+-  if (NOT CUDA_FOUND)
+-    message(FATAL_ERROR "no CUDA found")
+-  endif()
+-  SET(CUDA_NVCC_FLAG "${CUDA_NVCC_FLAGS};-arch=sm_60;")
+-  SET(CUDA_VERBOSE_BUILD ON)
+-  cuda_add_library(ldpc_cuda MODULE
+-                   nrLDPC_decoder_LYC/nrLDPC_decoder_LYC.cu
+-                   nrLDPC_encoder/ldpc_encoder_optim8segmulti.c
+-                   # The slot coding layer cannot be linked with
+-                   # target_link_libraries like above
+-                   # because of cuda_add_library
+-                   # which already uses target_link_libraries
+-                   nrLDPC_coding/nrLDPC_coding_segment/nrLDPC_coding_segment_decoder.c
+-                   nrLDPC_coding/nrLDPC_coding_segment/nrLDPC_coding_segment_encoder.c
+-                   nrLDPC_coding/nrLDPC_coding_segment/nr_rate_matching.c
+-  )
+-  set_target_properties(ldpc_cuda PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+-  set_target_properties(ldpc_cuda PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+-
+-  add_dependencies(ldpctest ldpc_cuda)
+-  add_dependencies(nr-softmodem ldpc_cuda)
+-  add_dependencies(nr-uesoftmodem ldpc_cuda)
+-  add_dependencies(nr_ulsim ldpc_cuda)
+-  add_dependencies(nr_ulschsim ldpc_cuda)
+-  add_dependencies(nr_dlsim ldpc_cuda)
+-  add_dependencies(nr_dlschsim ldpc_cuda)
+-endif()
++# LDPC CUDA is built via plugins/ldpc_cuda/CMakeLists.txt
+ 
+ add_subdirectory(nrLDPC_coding)
+ 
+diff --git a/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface.c b/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface.c
 new file mode 100644
-index 0000000000..de169058af
+index 0000000000..0dcb3fe40d
 --- /dev/null
-+++ b/docker/Dockerfile.nrUE.ubuntu22.aarch64
-@@ -0,0 +1,132 @@
-+#/*
-+# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
-+# * contributor license agreements.  See the NOTICE file distributed with
-+# * this work for additional information regarding copyright ownership.
-+# * The OpenAirInterface Software Alliance licenses this file to You under
-+# * the OAI Public License, Version 1.1  (the "License"); you may not use this file
-+# * except in compliance with the License.
-+# * You may obtain a copy of the License at
-+# *
-+# *      http://www.openairinterface.org/?page_id=698
-+# *
-+# * Unless required by applicable law or agreed to in writing, software
-+# * distributed under the License is distributed on an "AS IS" BASIS,
-+# * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+# * See the License for the specific language governing permissions and
-+# * limitations under the License.
-+# *-------------------------------------------------------------------------------
-+# * For more information about the OpenAirInterface (OAI) Software Alliance:
-+# *      contact@openairinterface.org
-+# */
-+#---------------------------------------------------------------------
-+#
-+# Dockerfile for the Open-Air-Interface BUILD service
-+#   Valid for Ubuntu 22.04
-+#
-+#---------------------------------------------------------------------
++++ b/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface.c
+@@ -0,0 +1,55 @@
++/*
++ * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
++ * contributor license agreements.  See the NOTICE file distributed with
++ * this work for additional information regarding copyright ownership.
++ * The OpenAirInterface Software Alliance licenses this file to You under
++ * the OAI Public License, Version 1.0  (the "License"); you may not use this file
++ * except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *      http://www.openairinterface.org/?page_id=698
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ *-------------------------------------------------------------------------------
++ * For more information about the OpenAirInterface (OAI) Software Alliance:
++ *      contact@openairinterface.org
++ */
 +
-+FROM ran-base:latest AS nr-ue-base
++/*! \file PHY/CODING/nrLDPC_coding/nrLDPC_coding_segment/nrLDPC_coding_segment_decoder.c
++ * \brief Top-level routines for decoding LDPC transport channels
++ */
 +
-+FROM ran-build:latest AS nr-ue-build
++// [from gNB coding]
++#include "PHY/defs_gNB.h"
++#include "PHY/CODING/coding_extern.h"
++#include "PHY/CODING/coding_defs.h"
++#include "PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface.h"
++#include "PHY/CODING/nrLDPC_extern.h"
++#include "defs.h"
++#include "common/utils/LOG/log.h"
 +
++#include <stdalign.h>
++#include <stdint.h>
++#include <syscall.h>
++#include <time.h>
++// #define gNB_DEBUG_TRACE
 +
-+#start from scratch for target executable
-+FROM ubuntu:jammy AS oai-nr-ue
-+ARG BUILD_OPTION
-+ENV DEBIAN_FRONTEND=noninteractive
-+ENV TZ=Europe/Paris
++int32_t nrLDPC_coding_init(void)
++{
++  return 0;
++}
 +
-+RUN apt-get update && \
-+    DEBIAN_FRONTEND=noninteractive apt-get upgrade --yes && \
-+    DEBIAN_FRONTEND=noninteractive apt-get install --yes \
-+        software-properties-common \
-+        procps \
-+        libsctp1 \
-+        libboost-chrono1.74.0 \
-+        libboost-date-time1.74.0 \
-+        libboost-filesystem1.74.0 \
-+        libboost-regex1.74.0 \
-+        libboost-serialization1.74.0 \
-+        libboost-thread1.74.0 \
-+        libboost-system1.74.0 \
-+        libboost-program-options1.74.0 \
-+        tzdata \
-+        liblapacke \
-+        libblas3 \
-+        libconfig9 \
-+	    libforms2 \
-+        openssl \
-+        net-tools \
-+        gdb \
-+        python3 \
-+        python3-six \
-+        python3-requests \
-+        libusb-1.0-0 \
-+        iputils-ping \
-+        iproute2 \
-+        iperf3 \
-+        iperf && \
-+# if the --sanitize option was used to build, additional packages are required
-+    /bin/bash -c 'if [[ "$BUILD_OPTION" = "--sanitize" ]]; then DEBIAN_FRONTEND=noninteractive apt-get install --yes \
-+        #libasan5 \ # see below
-+        libubsan1; fi' && \
-+    apt-get clean -y && \
-+    rm -rf /var/lib/apt/lists/*
++int32_t nrLDPC_coding_threadinit(void)
++{
++  return 0;
++}
 +
-+# we select another compile (gcc-12) for compilation, requiring another libasan
-+# library version. Installing it above would install the wrong version. Hence,
-+# copy the right version from ran-build. When upgrading to Ubuntu24, install
-+# the correct one above!
-+COPY --from=nr-ue-build /usr/lib/aarch64-linux-gnu/libasan.so.6.0.0 /usr/lib/aarch64-linux-gnu/
++int32_t nrLDPC_coding_shutdown(void)
++{
++  return 0;
++}
 +
-+WORKDIR /opt/oai-nr-ue/bin
-+COPY --from=nr-ue-build \
-+    /oai-ran/cmake_targets/ran_build/build/nr-uesoftmodem \
-+    ./
-+
-+COPY ./docker/scripts/nr_ue_entrypoint.sh ./entrypoint.sh
-+WORKDIR /opt/oai-nr-ue/etc
-+
-+COPY --from=nr-ue-build \
-+    /oai-ran/cmake_targets/ran_build/build/liboai_eth_transpro.so \
-+    /oai-ran/cmake_targets/ran_build/build/librfsimulator.so \
-+    /oai-ran/cmake_targets/ran_build/build/liboai_usrpdevif.so \
-+    /oai-ran/cmake_targets/ran_build/build/libcoding.so \
-+    /oai-ran/cmake_targets/ran_build/build/libparams_libconfig.so \
-+    /oai-ran/cmake_targets/ran_build/build/libdfts.so \
-+    /oai-ran/cmake_targets/ran_build/build/libldpc*.so \
-+    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv.so \
-+    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv_ciUE.so \
-+    /oai-ran/cmake_targets/ran_build/build/libtelnetsrv_5Gue.so \
-+    /oai-ran/cmake_targets/ran_build/build/libnrscope.so \
-+    /oai-ran/cmake_targets/ran_build/build/libuescope.so \
-+    /usr/local/lib/
-+
-+# Now we are copying from builder-image the UHD files.
-+COPY --from=nr-ue-base /usr/local/bin/uhd_find_devices /usr/local/bin
-+COPY --from=nr-ue-base /usr/local/lib/libuhd.so.4.4.0 /usr/local/lib
-+COPY --from=nr-ue-base /usr/local/lib/uhd/utils/uhd_images_downloader.py /opt/oai-nr-ue/bin
-+
-+RUN /bin/bash -c "ln -s /usr/local/lib/liboai_usrpdevif.so /usr/local/lib/liboai_device.so" && \
-+    ldconfig && \
-+    echo "---- ldd on nr-uesoftmodem ----" && \
-+    ldd /opt/oai-nr-ue/bin/nr-uesoftmodem && \
-+    echo "---- ldd on shared libraries ----" && \
-+    ldd /usr/local/lib/liboai_eth_transpro.so \
-+        /usr/local/lib/librfsimulator.so \
-+        /usr/local/lib/liboai_usrpdevif.so \
-+        /usr/local/lib/libcoding.so \
-+        /usr/local/lib/libparams_libconfig.so \
-+        /usr/local/lib/libdfts.so \
-+        /usr/local/lib/libldpc*.so \
-+        /usr/local/lib/libtelnetsrv.so \
-+        /usr/local/lib/libtelnetsrv_ciUE.so \
-+        /usr/local/lib/libtelnetsrv_5Gue.so \
-+        /usr/local/lib/libnrscope.so \
-+        /usr/local/lib/libuescope.so \
-+        /usr/local/lib/libuhd.so.4.4.0
-+
-+WORKDIR /opt/oai-nr-ue
-+COPY --from=nr-ue-base /tini /tini
-+CMD ["/opt/oai-nr-ue/bin/nr-uesoftmodem", "-O", "/opt/oai-nr-ue/etc/nr-ue.conf"]
-+ENTRYPOINT ["/tini", "-v", "--", "/opt/oai-nr-ue/bin/entrypoint.sh"]
-diff --git a/openair3/NAS/TOOLS/nvram.c b/openair3/NAS/TOOLS/nvram.c
-index 80d8b34893..45e952c9ae 100644
---- a/openair3/NAS/TOOLS/nvram.c
-+++ b/openair3/NAS/TOOLS/nvram.c
-@@ -69,7 +69,7 @@ int main (int argc, char * const argv[])
-     {NULL,     0,           NULL, 0}
-   };
-   int option_index;
--  char option_short;
-+  signed char option_short;
+diff --git a/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface.h b/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface.h
+index ca57c9bab3..e8b5a1d9c3 100644
+--- a/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface.h
++++ b/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface.h
+@@ -233,6 +233,7 @@ typedef struct nrLDPC_slot_encoding_parameters_s{
+ } nrLDPC_slot_encoding_parameters_t;
  
-   /*
-    * Read command line parameters
-diff --git a/openair3/NAS/TOOLS/usim.c b/openair3/NAS/TOOLS/usim.c
-index 84b4cfbdf8..ee1a37cb64 100644
---- a/openair3/NAS/TOOLS/usim.c
-+++ b/openair3/NAS/TOOLS/usim.c
-@@ -69,7 +69,7 @@ int main (int argc, char * const argv[])
-     {NULL,     0,           NULL, 0}
-   };
-   int option_index;
--  char option_short;
-+  signed char option_short;
+ typedef int32_t(nrLDPC_coding_init_t)(void);
++typedef int32_t(nrLDPC_coding_threadinit_t)(void);
+ typedef int32_t(nrLDPC_coding_shutdown_t)(void);
  
-   /*
-    * Read command line parameters
+ /**
+@@ -249,6 +250,7 @@ typedef int32_t(nrLDPC_coding_encoder_t)(nrLDPC_slot_encoding_parameters_t *nrLD
+ 
+ typedef struct nrLDPC_coding_interface_s {
+   nrLDPC_coding_init_t *nrLDPC_coding_init;
++  nrLDPC_coding_threadinit_t *nrLDPC_coding_threadinit;
+   nrLDPC_coding_shutdown_t *nrLDPC_coding_shutdown;
+   nrLDPC_coding_decoder_t *nrLDPC_coding_decoder;
+   nrLDPC_coding_encoder_t *nrLDPC_coding_encoder;
+diff --git a/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface_load.c b/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface_load.c
+index ab80eb77a0..689a00614c 100644
+--- a/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface_load.c
++++ b/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface_load.c
+@@ -49,6 +49,7 @@ int load_nrLDPC_coding_interface(char *version, nrLDPC_coding_interface_t *itf)
+   }
+   /* function description array, to be used when loading the encoding/decoding shared lib */
+   loader_shlibfunc_t shlib_fdesc[] = {{.fname = "nrLDPC_coding_init"},
++                                      {.fname = "nrLDPC_coding_threadinit"},
+                                       {.fname = "nrLDPC_coding_shutdown"},
+                                       {.fname = "nrLDPC_coding_decoder"},
+                                       {.fname = "nrLDPC_coding_encoder"}};
+@@ -59,9 +60,10 @@ int load_nrLDPC_coding_interface(char *version, nrLDPC_coding_interface_t *itf)
+     return ret;
+   }
+   itf->nrLDPC_coding_init = (nrLDPC_coding_init_t *)shlib_fdesc[0].fptr;
+-  itf->nrLDPC_coding_shutdown = (nrLDPC_coding_shutdown_t *)shlib_fdesc[1].fptr;
+-  itf->nrLDPC_coding_decoder = (nrLDPC_coding_decoder_t *)shlib_fdesc[2].fptr;
+-  itf->nrLDPC_coding_encoder = (nrLDPC_coding_encoder_t *)shlib_fdesc[3].fptr;
++  itf->nrLDPC_coding_threadinit = (nrLDPC_coding_threadinit_t *)shlib_fdesc[1].fptr;
++  itf->nrLDPC_coding_shutdown = (nrLDPC_coding_shutdown_t *)shlib_fdesc[2].fptr;
++  itf->nrLDPC_coding_decoder = (nrLDPC_coding_decoder_t *)shlib_fdesc[3].fptr;
++  itf->nrLDPC_coding_encoder = (nrLDPC_coding_encoder_t *)shlib_fdesc[4].fptr;
+ 
+   AssertFatal(itf->nrLDPC_coding_init() == 0, "error starting LDPC library %s %s\n", libname, version);
+ 
+diff --git a/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_segment/CMakeLists.txt b/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_segment/CMakeLists.txt
+index f96a2cfaca..8e7dd93ad9 100644
+--- a/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_segment/CMakeLists.txt
++++ b/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_segment/CMakeLists.txt
+@@ -2,6 +2,7 @@ add_library(ldpc_segment OBJECT
+   nr_rate_matching.c
+   nrLDPC_coding_segment_decoder.c
+   nrLDPC_coding_segment_encoder.c
++  ../nrLDPC_coding_interface.c
+ )
+ 
+ #ensure that the T header files are generated before targets depending on them
+diff --git a/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_segment/nrLDPC_coding_segment_decoder.c b/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_segment/nrLDPC_coding_segment_decoder.c
+index 3fece46ac8..826298acd2 100644
+--- a/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_segment/nrLDPC_coding_segment_decoder.c
++++ b/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_segment/nrLDPC_coding_segment_decoder.c
+@@ -279,18 +279,46 @@ int nrLDPC_prepare_TB_decoding(nrLDPC_slot_decoding_parameters_t *nrLDPC_slot_de
+   return nrLDPC_TB_decoding_parameters->C;
+ }
+ 
+-int32_t nrLDPC_coding_init(void)
+-{
+-  return 0;
+-}
++#define VISUALIZE_STATS
+ 
+-int32_t nrLDPC_coding_shutdown(void)
+-{
+-  return 0;
++#ifdef VISUALIZE_STATS
++#include <unistd.h>
++#include <pthread.h>
++#include <time.h>
++
++#define TIMESTAMP_CLOCK_SOURCE CLOCK_MONOTONIC
++
++#ifndef LDPC_DECODER_NAME
++#define LDPC_DECODER_NAME "LDPC decoder"
++#endif
++
++static frame_t shared_log_frame;
++
++struct TimeMeasurements {
++    unsigned long long avg_ns;
++    unsigned long long max_ns;
++    size_t count;
++};
++static __thread struct TimeMeasurements decode_time = {};
++static __thread struct TimeMeasurements decode_per_segment_time = {};
++
++static unsigned add_measurement(struct TimeMeasurements* time, unsigned long long time_ns, size_t max_samples) {
++    if (++time->count > max_samples)
++        time->count = max_samples;
++    time->avg_ns = (unsigned long long)((long long)time->avg_ns + (long long)(time_ns - time->avg_ns) / (int) time->count);
++    if (time_ns > time->max_ns)
++        time->max_ns = time_ns;
++    return time->count;
+ }
++#endif
+ 
+ int32_t nrLDPC_coding_decoder(nrLDPC_slot_decoding_parameters_t *nrLDPC_slot_decoding_parameters)
+ {
++#ifdef VISUALIZE_STATS
++  struct timespec ts_begin, ts_end;
++  clock_gettime( TIMESTAMP_CLOCK_SOURCE, &ts_begin );
++#endif
++
+   int nbSegments = 0;
+   for (int pusch_id = 0; pusch_id < nrLDPC_slot_decoding_parameters->nb_TBs; pusch_id++) {
+     nrLDPC_TB_decoding_parameters_t *nrLDPC_TB_decoding_parameters = &nrLDPC_slot_decoding_parameters->TBs[pusch_id];
+@@ -308,6 +336,21 @@ int32_t nrLDPC_coding_decoder(nrLDPC_slot_decoding_parameters_t *nrLDPC_slot_dec
+   // Execute thread pool tasks
+   join_task_ans(t_info.ans);
+ 
++#ifdef VISUALIZE_STATS
++  clock_gettime( TIMESTAMP_CLOCK_SOURCE, &ts_end );
++  unsigned long long time_ns = ts_end.tv_nsec - ts_begin.tv_nsec + 1000000000ll * (ts_end.tv_sec - ts_begin.tv_sec);
++  (void) add_measurement(&decode_time, time_ns, 500);
++  (void) add_measurement(&decode_per_segment_time, time_ns / nbSegments, 500);
++  // stats
++  frame_t prev_frame = *(frame_t volatile*) &shared_log_frame; // may be changed concurrently, re-checked with atomic below
++  frame_t frame = nrLDPC_slot_decoding_parameters->frame;
++  if (/*(slot == 0) &&*/ (frame & 127) == 0 && (prev_frame != frame)) {
++    if (__atomic_compare_exchange(&shared_log_frame, &prev_frame, &frame, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
++      LOG_I(NR_PHY, LDPC_DECODER_NAME ": %9.2f us (%9.2f us / seg)\n\n", decode_time.avg_ns / 1000.0, decode_per_segment_time.avg_ns / 1000.0);
++    }
++  }
++#endif
++
+   for (int pusch_id = 0; pusch_id < nrLDPC_slot_decoding_parameters->nb_TBs; pusch_id++) {
+     nrLDPC_TB_decoding_parameters_t *nrLDPC_TB_decoding_parameters = &nrLDPC_slot_decoding_parameters->TBs[pusch_id];
+     for (int r = 0; r < nrLDPC_TB_decoding_parameters->C; r++) {
+diff --git a/openair1/PHY/CODING/nrLDPC_defs.h b/openair1/PHY/CODING/nrLDPC_defs.h
+index 9abb048d83..cfb766c953 100644
+--- a/openair1/PHY/CODING/nrLDPC_defs.h
++++ b/openair1/PHY/CODING/nrLDPC_defs.h
+@@ -74,6 +74,7 @@ typedef struct {
+ } encoder_implemparams_t;
+ 
+ typedef int32_t(LDPC_initfunc_t)(void);
++typedef int32_t(LDPC_threadinitfunc_t)(void);
+ typedef int32_t(LDPC_shutdownfunc_t)(void);
+ 
+ // decoder interface
+diff --git a/openair1/PHY/CODING/nrLDPC_extern.h b/openair1/PHY/CODING/nrLDPC_extern.h
+index 7c4287d3f1..ba9b9a48e6 100644
+--- a/openair1/PHY/CODING/nrLDPC_extern.h
++++ b/openair1/PHY/CODING/nrLDPC_extern.h
+@@ -26,6 +26,7 @@
+ /* ldpc coder/decoder API*/
+ typedef struct ldpc_interface_s {
+   LDPC_initfunc_t *LDPCinit;
++  LDPC_threadinitfunc_t *LDPCthreadinit;
+   LDPC_shutdownfunc_t *LDPCshutdown;
+   LDPC_decoderfunc_t *LDPCdecoder;
+   LDPC_encoderfunc_t *LDPCencoder;
+diff --git a/openair1/PHY/CODING/nrLDPC_load.c b/openair1/PHY/CODING/nrLDPC_load.c
+index 0316ebadc5..8d3ba6339e 100644
+--- a/openair1/PHY/CODING/nrLDPC_load.c
++++ b/openair1/PHY/CODING/nrLDPC_load.c
+@@ -54,6 +54,7 @@ int load_LDPClib(char *version, ldpc_interface_t *itf)
+   }
+   /* function description array, to be used when loading the encoding/decoding shared lib */
+   loader_shlibfunc_t shlib_fdesc[] = {{.fname = "LDPCinit"},
++                                      {.fname = "LDPCthreadinit"},
+                                       {.fname = "LDPCshutdown"},
+                                       {.fname = "LDPCdecoder"},
+                                       {.fname = "LDPCencoder"}};
+@@ -61,9 +62,10 @@ int load_LDPClib(char *version, ldpc_interface_t *itf)
+   ret = load_module_version_shlib(libname, version, shlib_fdesc, sizeofArray(shlib_fdesc), NULL);
+   AssertFatal((ret >= 0), "Error loading ldpc decoder");
+   itf->LDPCinit = (LDPC_initfunc_t *)shlib_fdesc[0].fptr;
+-  itf->LDPCshutdown = (LDPC_shutdownfunc_t *)shlib_fdesc[1].fptr;
+-  itf->LDPCdecoder = (LDPC_decoderfunc_t *)shlib_fdesc[2].fptr;
+-  itf->LDPCencoder = (LDPC_encoderfunc_t *)shlib_fdesc[3].fptr;
++  itf->LDPCthreadinit = (LDPC_threadinitfunc_t *)shlib_fdesc[1].fptr;
++  itf->LDPCshutdown = (LDPC_shutdownfunc_t *)shlib_fdesc[2].fptr;
++  itf->LDPCdecoder = (LDPC_decoderfunc_t *)shlib_fdesc[3].fptr;
++  itf->LDPCencoder = (LDPC_encoderfunc_t *)shlib_fdesc[4].fptr;
+ 
+   AssertFatal(itf->LDPCinit() == 0, "error starting LDPC library %s %s\n", libname, version);
+ 
+diff --git a/openair1/PHY/INIT/nr_init.c b/openair1/PHY/INIT/nr_init.c
+index 60bc63dac4..b75f7bdb65 100644
+--- a/openair1/PHY/INIT/nr_init.c
++++ b/openair1/PHY/INIT/nr_init.c
+@@ -43,6 +43,8 @@
+ #include "PHY/NR_REFSIG/ul_ref_seq_nr.h"
+ #include <string.h>
+ #include "nfapi/open-nFAPI/fapi/inc/nr_fapi_p5_utils.h"
++#include "plugins/common/src/plugins.h"
++
+ 
+ int l1_north_init_gNB()
+ {
+@@ -99,6 +101,22 @@ void reset_active_stats(PHY_VARS_gNB *gNB, int frame)
+   }
+ }
+ 
++extern void (*initThreadHook)();
++static void (*prev_initThreadHook)() = NULL;
++
++void worker_thread_init() {
++    if (prev_initThreadHook)
++        prev_initThreadHook();
++
++    for (int inst = 0; inst < RC.nb_nr_L1_inst; inst++) {
++        PHY_VARS_gNB *gNB = RC.gNB[inst];
++        if (gNB->nrLDPC_coding_interface.nrLDPC_coding_threadinit)
++            gNB->nrLDPC_coding_interface.nrLDPC_coding_threadinit();
++    }
++
++    worker_thread_plugin_init();
++}
++
+ void phy_init_nr_gNB(PHY_VARS_gNB *gNB)
+ {
+   // shortcuts
+@@ -138,6 +156,16 @@ void phy_init_nr_gNB(PHY_VARS_gNB *gNB)
+   int ret_loader = load_nrLDPC_coding_interface(NULL, &gNB->nrLDPC_coding_interface);
+   AssertFatal(ret_loader == 0, "error loading LDPC library\n");
+ 
++  // load plugin extensions
++  init_plugins();
++  printf("\nInitialized plugins\n\n");
++
++  // now everyting is initialized for worker thread modules
++  if (initThreadHook != &worker_thread_init) {
++      prev_initThreadHook = initThreadHook;
++      initThreadHook = &worker_thread_init;
++  }
++
+   gNB->max_nb_pdsch = MAX_MOBILES_PER_GNB;
+   init_delay_table(fp->ofdm_symbol_size, MAX_DELAY_COMP, NR_MAX_OFDM_SYMBOL_SIZE, fp->delay_table);
+   init_delay_table(128, MAX_DELAY_COMP, 128, fp->delay_table128);
+@@ -184,8 +212,8 @@ void phy_init_nr_gNB(PHY_VARS_gNB *gNB)
+     for (int j = 0; j < Ptx; j++)
+       common_vars->txdataF[i][j] = (c16_t*)malloc16_clear(fp->samples_per_frame_wCP * sizeof(c16_t));
+   }
+-  common_vars->debugBuff = (int32_t*)malloc16_clear(fp->samples_per_frame*sizeof(int32_t)*100);	
+-  common_vars->debugBuff_sample_offset = 0; 
++  common_vars->debugBuff = (int32_t*)malloc16_clear(fp->samples_per_frame*sizeof(int32_t)*100);
++  common_vars->debugBuff_sample_offset = 0;
+ 
+   // PRACH
+   prach_vars->rxsigF = (int16_t **)malloc16_clear(Prx*sizeof(int16_t*));
+@@ -286,6 +314,7 @@ void phy_free_nr_gNB(PHY_VARS_gNB *gNB)
+ 
+   free_nrLDPC_coding_interface(&gNB->nrLDPC_coding_interface);
+ 
++  free_plugins();
+ }
+ 
+ //Adding nr_schedule_handler
+@@ -368,7 +397,7 @@ void nr_phy_config_request(NR_PHY_Config_t *phy_config)
+ 
+   uint64_t dl_bw_khz = (12*gNB_config->carrier_config.dl_grid_size[gNB_config->ssb_config.scs_common.value].value)*(15<<gNB_config->ssb_config.scs_common.value);
+   fp->dl_CarrierFreq = ((dl_bw_khz>>1) + gNB_config->carrier_config.dl_frequency.value)*1000 ;
+-  
++
+   uint64_t ul_bw_khz = (12*gNB_config->carrier_config.ul_grid_size[gNB_config->ssb_config.scs_common.value].value)*(15<<gNB_config->ssb_config.scs_common.value);
+   fp->ul_CarrierFreq = ((ul_bw_khz>>1) + gNB_config->carrier_config.uplink_frequency.value)*1000 ;
+ 
+@@ -385,7 +414,7 @@ void nr_phy_config_request(NR_PHY_Config_t *phy_config)
+         (unsigned long long)fp->ul_CarrierFreq);
+ 
+   nr_init_frame_parms(gNB_config, fp);
+-  
++
+ 
+   if (RC.gNB[Mod_id]->configured == 1) {
+     LOG_E(PHY,"Already gNB already configured, do nothing\n");
+@@ -457,7 +486,7 @@ void init_nr_transport(PHY_VARS_gNB *gNB)
+         if(cfg->tdd_table.max_tdd_periodicity_list[i].max_num_of_symbol_per_slot_list[j].slot_config.value == 1) { // UL symbol
+           nb_ul_slots_period++;
+           break;
+-        }  
++        }
+       }
+     }
+   }
+diff --git a/openair1/PHY/NR_TRANSPORT/nr_prach.c b/openair1/PHY/NR_TRANSPORT/nr_prach.c
+index 76d9b1185f..50aa21c1db 100644
+--- a/openair1/PHY/NR_TRANSPORT/nr_prach.c
++++ b/openair1/PHY/NR_TRANSPORT/nr_prach.c
+@@ -132,9 +132,31 @@ int16_t find_nr_prach_ru(RU_t *ru,int frame,int slot, find_type_t type)
+ void nr_fill_prach_ru(RU_t *ru, int SFN, int Slot, nfapi_nr_prach_pdu_t *prach_pdu, int *beam_id)
+ {
+   int prach_id = find_nr_prach_ru(ru, SFN, Slot, SEARCH_EXIST_OR_FREE);
+-  AssertFatal((prach_id >= 0) && (prach_id < NUMBER_OF_NR_PRACH_MAX),
+-              "illegal or no prach_id found!!! prach_id %d\n",
+-              prach_id);
++  
++  // Handle full PRACH list gracefully - reuse oldest entry instead of crashing
++  if (prach_id < 0 || prach_id >= NUMBER_OF_NR_PRACH_MAX) {
++    LOG_W(PHY, "PRACH list full! Looking for oldest entry to reuse (frame %d, slot %d)\n", SFN, Slot);
++    
++    pthread_mutex_lock(&ru->prach_list_mutex);
++    // Find the oldest entry (smallest frame.slot combination)
++    int oldest_id = 0;
++    int oldest_frame = ru->prach_list[0].frame;
++    int oldest_slot = ru->prach_list[0].slot;
++    
++    for (int i = 1; i < NUMBER_OF_NR_RU_PRACH_MAX; i++) {
++      if (ru->prach_list[i].frame < oldest_frame ||
++          (ru->prach_list[i].frame == oldest_frame && ru->prach_list[i].slot < oldest_slot)) {
++        oldest_id = i;
++        oldest_frame = ru->prach_list[i].frame;
++        oldest_slot = ru->prach_list[i].slot;
++      }
++    }
++    
++    prach_id = oldest_id;
++    LOG_W(PHY, "Reusing PRACH entry %d (was frame %d, slot %d, now frame %d, slot %d)\n",
++          prach_id, oldest_frame, oldest_slot, SFN, Slot);
++    pthread_mutex_unlock(&ru->prach_list_mutex);
++  }
+ 
+   pthread_mutex_lock(&ru->prach_list_mutex);
+   ru->prach_list[prach_id].frame = SFN;
+diff --git a/openair1/PHY/NR_TRANSPORT/nr_ulsch_demodulation.c b/openair1/PHY/NR_TRANSPORT/nr_ulsch_demodulation.c
+index bd4ee92284..3de50fb59c 100644
+--- a/openair1/PHY/NR_TRANSPORT/nr_ulsch_demodulation.c
++++ b/openair1/PHY/NR_TRANSPORT/nr_ulsch_demodulation.c
+@@ -3,6 +3,7 @@
+ #include "nr_transport_proto.h"
+ #include "PHY/impl_defs_top.h"
+ #include "PHY/NR_TRANSPORT/nr_sch_dmrs.h"
++#include "plugins/neural_receiver/src/nr_receiver_extern.h"
+ #include "PHY/NR_REFSIG/dmrs_nr.h"
+ #include "PHY/NR_REFSIG/ptrs_nr.h"
+ #include "PHY/NR_ESTIMATION/nr_ul_estimation.h"
+@@ -195,7 +196,7 @@ static void nr_ulsch_scale_channel(int size_est,
+   }
+ }
+ 
+-static int get_nb_re_pusch (NR_DL_FRAME_PARMS *frame_parms, nfapi_nr_pusch_pdu_t *rel15_ul,int symbol) 
++static int get_nb_re_pusch (NR_DL_FRAME_PARMS *frame_parms, nfapi_nr_pusch_pdu_t *rel15_ul,int symbol)
+ {
+   uint8_t dmrs_symbol_flag = (rel15_ul->ul_dmrs_symb_pos >> symbol) & 0x01;
+   if (dmrs_symbol_flag == 1) {
+@@ -257,11 +258,11 @@ static void nr_ulsch_channel_compensation(uint32_t buffer_length,
+       simde__m256i *rxF_256 = (simde__m256i *)rxFext[aarx];
+       simde__m256i *chF_256 = (simde__m256i *)chFext[aatx][aarx];
+ 
+-      for (int i = 0; i < buffer_length >> 3; i++) 
++      for (int i = 0; i < buffer_length >> 3; i++)
+       {
+-        // MRC        
++        // MRC
+         simde__m256i comp = oai_mm256_cpx_mult_conj(chF_256[i], rxF_256[i], output_shift);
+-        rxComp_256[i] = simde_mm256_add_epi16(rxComp_256[i], comp); 
++        rxComp_256[i] = simde_mm256_add_epi16(rxComp_256[i], comp);
+ 
+         if (mod_order > 2) {
+           simde__m256i mag = oai_mm256_smadd(chF_256[i], chF_256[i], output_shift); // |h|^2
+@@ -276,7 +277,7 @@ static void nr_ulsch_channel_compensation(uint32_t buffer_length,
+ 
+           if (mod_order > 6)
+             rxF_ch_magc_256[i] = simde_mm256_add_epi16(rxF_ch_magc_256[i], simde_mm256_mulhrs_epi16(mag, QAM_ampc_256));
+-        }        
++        }
+       }
+       if (nb_layers > 1) {
+         for (int atx = 0; atx < nrOfLayers; atx++) {
+@@ -786,7 +787,7 @@ static uint8_t nr_ulsch_mmse_2layers(int **rxdataF_comp,
+   simde__m128i *after_mf_b_128 = (simde__m128i *)af_mf_01;
+   simde__m128i *after_mf_c_128 = (simde__m128i *)af_mf_10;
+   simde__m128i *after_mf_d_128 = (simde__m128i *)af_mf_11;
+-  
++
+   simde__m128i *rxdataF_comp128_0 = (simde__m128i *)&rxdataF_comp[0][symbol * buffer_length];
+   simde__m128i *rxdataF_comp128_1 = (simde__m128i *)&rxdataF_comp[nb_rx_ant][symbol * buffer_length];
+ 
+@@ -941,7 +942,7 @@ static void inner_rx(PHY_VARS_gNB *gNB,
+                            soffset+(symbol * frame_parms->ofdm_symbol_size),
+                            dmrs_symbol * frame_parms->ofdm_symbol_size,
+                            aarx,
+-                           dmrs_symbol_flag, 
++                           dmrs_symbol_flag,
+                            rel15_ul,
+                            frame_parms);
+ #if T_TRACER
+@@ -1057,6 +1058,7 @@ typedef struct puschSymbolProc_s {
+   int numSymbols;
+   int16_t *llr;
+   int16_t *scramblingSequence;
++  frame_t frame;
+   uint32_t nvar;
+   int beam_nb;
+   task_ans_t *ans;
+@@ -1073,53 +1075,106 @@ static void nr_pusch_symbol_processing(void *arg)
+   nfapi_nr_pusch_pdu_t *rel15_ul = rdata->rel15_ul;
+   int ulsch_id = rdata->ulsch_id;
+   int slot = rdata->slot;
++  frame_t frame = rdata->frame;
+   NR_gNB_PUSCH *pusch_vars = &gNB->pusch_vars[ulsch_id];
++  int decoding_handled = 0, output_capture_requested = 0;
++  int rx_plugin_enabled = receiver_interface.compute_llr && (!receiver_interface.symbols_requested || receiver_interface.symbols_requested(frame_parms));
++  if (rx_plugin_enabled && !(rel15_ul->pdu_bit_map & PUSCH_PDU_BITMAP_PUSCH_PTRS)) {
++    // not supported with custom receiver plugin
++    AssertFatal(!(rel15_ul->nrOfLayers == 1 && rel15_ul->transform_precoding == transformPrecoder_enabled && rel15_ul->qam_mod_order <= 6), "Unsupported code path");
++
++    int soffset = (slot % RU_RX_SLOT_DEPTH) * frame_parms->symbols_per_slot * frame_parms->ofdm_symbol_size;
++    decoding_handled = receiver_interface.compute_llr(gNB,
++                                   ulsch_id,
++                                   slot,
++                                   frame,
++                                   frame_parms,
++                                   pusch_vars,
++                                   rel15_ul,
++                                   gNB->common_vars.rxdataF[rdata->beam_nb],
++                                   (c16_t**)gNB->pusch_vars[ulsch_id].ul_ch_estimates,
++                                   rdata->llr, // symbol indexing: &llrs[pusch_vars->llr_offset[symbol] * rel15_ul->nrOfLayers],
++                                   soffset,
++                                   gNB->pusch_vars[ulsch_id].ul_valid_re_per_slot,
++                                   rdata->startSymbol,
++                                   rdata->numSymbols,
++                                   gNB->pusch_vars[ulsch_id].log2_maxh,
++                                   rdata->nvar);
++    if (decoding_handled == -1) {
++        decoding_handled = 0;
++        output_capture_requested = 1;
++    }
++  }
+   for (int symbol = rdata->startSymbol; symbol < rdata->startSymbol + rdata->numSymbols; symbol++) {
+     if (gNB->pusch_vars[ulsch_id].ul_valid_re_per_slot[symbol] == 0) 
+       continue;
+     int soffset = (slot % RU_RX_SLOT_DEPTH) * frame_parms->symbols_per_slot * frame_parms->ofdm_symbol_size;
+     int buffer_length = ceil_mod(pusch_vars->ul_valid_re_per_slot[symbol] * NR_NB_SC_PER_RB, 16);
++    int nb_re_pusch = gNB->pusch_vars[ulsch_id].ul_valid_re_per_slot[symbol];
++
+     int16_t llrs[rel15_ul->nrOfLayers][ceil_mod(buffer_length * rel15_ul->qam_mod_order, 64)];
+     int16_t *llrss[rel15_ul->nrOfLayers];
+     for (int l = 0; l < rel15_ul->nrOfLayers; l++)
+       llrss[l] = llrs[l];
+ 
+-    inner_rx(gNB,
+-             ulsch_id,
+-             slot,
+-             frame_parms,
+-             pusch_vars,
+-             rel15_ul,
+-             gNB->common_vars.rxdataF[rdata->beam_nb],
+-             (c16_t **)gNB->pusch_vars[ulsch_id].ul_ch_estimates,
+-             llrss,
+-             soffset,
+-             gNB->pusch_vars[ulsch_id].ul_valid_re_per_slot[symbol],
+-             symbol,
+-             gNB->pusch_vars[ulsch_id].log2_maxh,
+-             rdata->nvar,
+-             rdata->rxFext_slot_mem,
+-             rdata->pusch_ch_est_dmrs_interpl_slot_mem);
+-
+-    int nb_re_pusch = gNB->pusch_vars[ulsch_id].ul_valid_re_per_slot[symbol];
+-    // layer de-mapping
+-    int16_t *llr_ptr = llrs[0];
+-    if (rel15_ul->nrOfLayers != 1) {
+-      llr_ptr = &rdata->llr[pusch_vars->llr_offset[symbol] * rel15_ul->nrOfLayers];
+-      for (int i = 0; i < (nb_re_pusch); i++)
+-        for (int l = 0; l < rel15_ul->nrOfLayers; l++)
+-          for (int m = 0; m < rel15_ul->qam_mod_order; m++)
+-            llr_ptr[i * rel15_ul->nrOfLayers * rel15_ul->qam_mod_order + l * rel15_ul->qam_mod_order + m] =
+-                llrss[l][i * rel15_ul->qam_mod_order + m];
++    int16_t *llr_ptr = &rdata->llr[pusch_vars->llr_offset[symbol] * rel15_ul->nrOfLayers];
++    if (!decoding_handled) {
++      inner_rx(gNB,
++               ulsch_id,
++               slot,
++               frame_parms,
++               pusch_vars,
++               rel15_ul,
++               gNB->common_vars.rxdataF[rdata->beam_nb],
++               (c16_t **)gNB->pusch_vars[ulsch_id].ul_ch_estimates,
++               llrss,
++               soffset,
++               gNB->pusch_vars[ulsch_id].ul_valid_re_per_slot[symbol],
++               symbol,
++               gNB->pusch_vars[ulsch_id].log2_maxh,
++               rdata->nvar,
++               rdata->rxFext_slot_mem,
++               rdata->pusch_ch_est_dmrs_interpl_slot_mem);
++
++      // layer de-mapping
++      llr_ptr = llrs[0];
++      if (rel15_ul->nrOfLayers != 1) {
++        llr_ptr = &rdata->llr[pusch_vars->llr_offset[symbol] * rel15_ul->nrOfLayers];
++        for (int i = 0; i < (nb_re_pusch); i++)
++          for (int l = 0; l < rel15_ul->nrOfLayers; l++)
++            for (int m = 0; m < rel15_ul->qam_mod_order; m++)
++              llr_ptr[i * rel15_ul->nrOfLayers * rel15_ul->qam_mod_order + l * rel15_ul->qam_mod_order + m] =
++                  llrss[l][i * rel15_ul->qam_mod_order + m];
++      }
+     }
+     // unscrambling
+-    int16_t *llr16 = (int16_t*)&rdata->llr[pusch_vars->llr_offset[symbol] * rel15_ul->nrOfLayers];
++    int16_t *llr16 = &rdata->llr[pusch_vars->llr_offset[symbol] * rel15_ul->nrOfLayers];
+     int16_t *s = rdata->scramblingSequence + pusch_vars->llr_offset[symbol] * rel15_ul->nrOfLayers;
+     const int end = nb_re_pusch * rel15_ul->qam_mod_order * rel15_ul->nrOfLayers;
+     for (int i = 0; i < end; i++)
+       llr16[i] = llr_ptr[i] * s[i];
+   }
+ 
++  if (rx_plugin_enabled && output_capture_requested) {
++    int soffset = (slot % RU_RX_SLOT_DEPTH) * frame_parms->symbols_per_slot * frame_parms->ofdm_symbol_size;
++    receiver_interface.compute_llr(gNB,
++                                   ulsch_id,
++                                   slot,
++                                   frame,
++                                   frame_parms,
++                                   pusch_vars,
++                                   rel15_ul,
++                                   NULL,
++                                   NULL,
++                                   rdata->llr, // symbol indexing: &llrs[pusch_vars->llr_offset[symbol] * rel15_ul->nrOfLayers],
++                                   soffset,
++                                   gNB->pusch_vars[ulsch_id].ul_valid_re_per_slot,
++                                   rdata->startSymbol,
++                                   rdata->numSymbols,
++                                   gNB->pusch_vars[ulsch_id].log2_maxh,
++                                   rdata->nvar);
++  }
++
+   // Task running in // completed
+   completed_task_ans(rdata->ans);
+ }
+@@ -1204,7 +1259,7 @@ int nr_rx_pusch_tp(PHY_VARS_gNB *gNB,
+   for(uint8_t symbol = rel15_ul->start_symbol_index; symbol < end_symbol; symbol++) {
+     uint8_t dmrs_symbol_flag = (rel15_ul->ul_dmrs_symb_pos >> symbol) & 0x01;
+     LOG_D(PHY, "symbol %d, dmrs_symbol_flag :%d\n", symbol, dmrs_symbol_flag);
+-    
++
+     if (dmrs_symbol_flag == 1) {
+ 
+       for (int nl = 0; nl < rel15_ul->nrOfLayers; nl++) {
+@@ -1225,7 +1280,7 @@ int nr_rx_pusch_tp(PHY_VARS_gNB *gNB,
+         nvar += nvar_tmp;
+       }
+       // measure the SNR from the channel estimation
+-      nr_gnb_measurements(gNB, 
++      nr_gnb_measurements(gNB,
+                           &gNB->ulsch[ulsch_id],
+                           pusch_vars,
+                           symbol,
+@@ -1333,7 +1388,7 @@ int nr_rx_pusch_tp(PHY_VARS_gNB *gNB,
+   // first the computation of channel levels
+ 
+   int nb_re_pusch = 0, meas_symbol = -1;
+-  for(meas_symbol = rel15_ul->start_symbol_index; meas_symbol < end_symbol; meas_symbol++) 
++  for(meas_symbol = rel15_ul->start_symbol_index; meas_symbol < end_symbol; meas_symbol++)
+     if ((nb_re_pusch = get_nb_re_pusch(frame_parms, rel15_ul, meas_symbol)) > 0)
+       break;
+ 
+@@ -1357,7 +1412,7 @@ int nr_rx_pusch_tp(PHY_VARS_gNB *gNB,
+   memset(ul_ch_estimates_ext, 0, sizeof(ul_ch_estimates_ext));
+   int buffer_length = rel15_ul->rb_size * NR_NB_SC_PER_RB;
+   c16_t temp_rxFext[frame_parms->nb_antennas_rx][buffer_length] __attribute__((aligned(32)));
+-  for (int aarx = 0; aarx < frame_parms->nb_antennas_rx; aarx++) 
++  for (int aarx = 0; aarx < frame_parms->nb_antennas_rx; aarx++)
+     for (int nl = 0; nl < rel15_ul->nrOfLayers; nl++)
+       nr_ulsch_extract_rbs(gNB->common_vars.rxdataF[beam_nb][aarx],
+                            (c16_t *)pusch_vars->ul_ch_estimates[nl * frame_parms->nb_antennas_rx + aarx],
+@@ -1366,7 +1421,7 @@ int nr_rx_pusch_tp(PHY_VARS_gNB *gNB,
+                            soffset + meas_symbol * frame_parms->ofdm_symbol_size,
+                            dmrs_symbol * frame_parms->ofdm_symbol_size,
+                            aarx,
+-                           (rel15_ul->ul_dmrs_symb_pos >> meas_symbol) & 0x01, 
++                           (rel15_ul->ul_dmrs_symb_pos >> meas_symbol) & 0x01,
+                            rel15_ul,
+                            frame_parms);
+ 
+@@ -1403,7 +1458,7 @@ int nr_rx_pusch_tp(PHY_VARS_gNB *gNB,
+     pusch_vars->log2_maxh = (log2_approx(avgs) >> 1) - 3; // for MMSE
+   else if (rel15_ul->nrOfLayers == 2)
+     pusch_vars->log2_maxh = (log2_approx(avgs) >> 1) - 2 + log2_approx(frame_parms->nb_antennas_rx >> 1);
+-  else 
++  else
+     pusch_vars->log2_maxh = (log2_approx(avgs) >> 1) + 1 + log2_approx(frame_parms->nb_antennas_rx >> 1);
+ 
+   if (pusch_vars->log2_maxh < 0)
+@@ -1413,6 +1468,13 @@ int nr_rx_pusch_tp(PHY_VARS_gNB *gNB,
+ 
+   start_meas(&gNB->rx_pusch_symbol_processing_stats);
+   int numSymbols = gNB->num_pusch_symbols_per_thread;
++  if (receiver_interface.symbols_requested) {
++    int numRequestedSymbols = receiver_interface.symbols_requested(frame_parms);
++    if (numRequestedSymbols < 0)
++      numSymbols = frame_parms->symbols_per_slot;
++    else if (numRequestedSymbols)
++      numSymbols = numRequestedSymbols;
++  }
+   int total_res = 0;
+   int const loop_iter = CEILIDIV(rel15_ul->nr_of_symbols, numSymbols);
+   puschSymbolProc_t arr[loop_iter];
+@@ -1425,8 +1487,8 @@ int nr_rx_pusch_tp(PHY_VARS_gNB *gNB,
+     int res_per_task = 0;
+     for (int s = 0; s < numSymbols && s + symbol < end_symbol; s++) {
+       pusch_vars->ul_valid_re_per_slot[symbol+s] = get_nb_re_pusch(frame_parms,rel15_ul,symbol+s);
+-      pusch_vars->llr_offset[symbol+s] = ((symbol+s) == rel15_ul->start_symbol_index) ? 
+-                                         0 : 
++      pusch_vars->llr_offset[symbol+s] = ((symbol+s) == rel15_ul->start_symbol_index) ?
++                                         0 :
+                                          pusch_vars->llr_offset[symbol+s-1] + pusch_vars->ul_valid_re_per_slot[symbol+s-1] * rel15_ul->qam_mod_order;
+       res_per_task += pusch_vars->ul_valid_re_per_slot[symbol + s];
+     }
+@@ -1450,6 +1512,8 @@ int nr_rx_pusch_tp(PHY_VARS_gNB *gNB,
+       rdata->beam_nb = beam_nb;
+       rdata->rxFext_slot_mem = rxFext_slot_mem;
+       rdata->pusch_ch_est_dmrs_interpl_slot_mem = pusch_ch_est_dmrs_interpl_slot_mem;
++      // added for custom decoding
++      rdata->frame = frame;
+ 
+       if (rel15_ul->pdu_bit_map & PUSCH_PDU_BITMAP_PUSCH_PTRS) {
+         nr_pusch_symbol_processing(rdata);
+diff --git a/openair1/PHY/NR_TRANSPORT/nr_ulsch_llr_computation.c b/openair1/PHY/NR_TRANSPORT/nr_ulsch_llr_computation.c
+index 3f4660744d..bd4f56baf6 100644
+--- a/openair1/PHY/NR_TRANSPORT/nr_ulsch_llr_computation.c
++++ b/openair1/PHY/NR_TRANSPORT/nr_ulsch_llr_computation.c
+@@ -33,12 +33,13 @@
+ #include "PHY/defs_gNB.h"
+ #include "PHY/sse_intrin.h"
+ #include "nr_phy_common.h"
++#include "plugins/neural_demapper/src/nr_demapper_extern.h"
+ 
+ #ifdef __aarch64__
+ #define USE_128BIT
+ #endif
+ 
+-void nr_ulsch_compute_llr(int32_t *rxdataF_comp,
++void nr_ulsch_compute_llr_default(int32_t *rxdataF_comp,
+                           c16_t *ul_ch_mag,
+                           c16_t *ul_ch_magb,
+                           c16_t *ul_ch_magc,
+@@ -66,6 +67,38 @@ void nr_ulsch_compute_llr(int32_t *rxdataF_comp,
+   }
+ }
+ 
++// START marker-compute-llr-start
++void nr_ulsch_compute_llr(int32_t *rxdataF_comp,
++                          c16_t *ul_ch_mag,
++                          c16_t *ul_ch_magb,
++                          c16_t *ul_ch_magc,
++                          int16_t *ulsch_llr,
++                          uint32_t nb_re,
++                          uint8_t symbol,
++                          uint8_t mod_order)
++{
++    int handled = 0;
++    if (demapper_interface.compute_llr)
++        handled = demapper_interface.compute_llr(rxdataF_comp,
++                                                 ul_ch_mag,
++                                                 ul_ch_magb,
++                                                 ul_ch_magc,
++                                                 ulsch_llr,
++                                                 nb_re,
++                                                 symbol,
++                                                 mod_order);
++    if (!handled)
++      nr_ulsch_compute_llr_default(rxdataF_comp,
++                                   ul_ch_mag,
++                                   ul_ch_magb,
++                                   ul_ch_magc,
++                                   ulsch_llr,
++                                   nb_re,
++                                   symbol,
++                                   mod_order);
++}
++// END marker-compute-llr-end
++
+ /*
+  * This function computes the LLRs of stream 0 (s_0) in presence of the interfering stream 1 (s_1) assuming that both symbols are
+  * QPSK. It can be used for both MU-MIMO interference-aware receiver or for SU-MIMO receivers.
+@@ -394,14 +427,14 @@ void nr_ulsch_qpsk_qpsk(c16_t *stream0_in, c16_t *stream1_in, int16_t *stream0_o
+ // calculate interference magnitude
+ // tmp_result = ones in shorts corr. to interval 2<=x<=4, tmp_result2 interval < 2, tmp_result3 interval 4<x<6 and tmp_result4
+ // interval x>6
+-static inline simde__m128i interference_abs_64qam_epi16(simde__m128i psi, 
+-                                                        simde__m128i int_ch_mag, 
+-                                                        simde__m128i int_two_ch_mag, 
+-                                                        simde__m128i int_three_ch_mag, 
+-                                                        simde__m128i c1, 
+-                                                        simde__m128i c3, 
+-                                                        simde__m128i c5, 
+-                                                        simde__m128i c7) 
++static inline simde__m128i interference_abs_64qam_epi16(simde__m128i psi,
++                                                        simde__m128i int_ch_mag,
++                                                        simde__m128i int_two_ch_mag,
++                                                        simde__m128i int_three_ch_mag,
++                                                        simde__m128i c1,
++                                                        simde__m128i c3,
++                                                        simde__m128i c5,
++                                                        simde__m128i c7)
+ {
+   simde__m128i tmp_result  = simde_mm_cmpgt_epi16(int_two_ch_mag, psi);
+   simde__m128i tmp_result3 = simde_mm_xor_si128(tmp_result, allones128());
+@@ -490,13 +523,13 @@ static inline simde__m128i max_epi16(simde__m128i m0, simde__m128i m1, simde__m1
+ // calculate interference magnitude
+ // tmp_result = ones in shorts corr. to interval 2<=x<=4, tmp_result2 interval < 2, tmp_result3 interval 4<x<6 and tmp_result4
+ // interval x>6
+-static inline simde__m256i interference_abs_64qam_epi16_256(simde__m256i psi, 
+-                                                            simde__m256i int_ch_mag, 
+-                                                            simde__m256i int_two_ch_mag, 
+-                                                            simde__m256i int_three_ch_mag, 
+-                                                            simde__m256i c1, 
+-                                                            simde__m256i c3, 
+-                                                            simde__m256i c5, 
++static inline simde__m256i interference_abs_64qam_epi16_256(simde__m256i psi,
++                                                            simde__m256i int_ch_mag,
++                                                            simde__m256i int_two_ch_mag,
++                                                            simde__m256i int_three_ch_mag,
++                                                            simde__m256i c1,
++                                                            simde__m256i c3,
++                                                            simde__m256i c5,
+                                                             simde__m256i c7)
+ {
+   simde__m256i tmp_result = simde_mm256_cmpgt_epi16(int_two_ch_mag, psi);
+@@ -1259,7 +1292,7 @@ void nr_ulsch_qam64_qam64(c16_t *stream0_in,
+       // Detection of interference term
+       a_r_s[j] = interference_abs_64qam_epi16(psi_r_s[j], ch_mag_int_with_sigma2, two_ch_mag_int_with_sigma2, three_ch_mag_int_with_sigma2, ONE_OVER_SQRT_2_42, THREE_OVER_SQRT_2_42, FIVE_OVER_SQRT_2_42, SEVEN_OVER_SQRT_2_42);
+       a_i_s[j] = interference_abs_64qam_epi16(psi_i_s[j], ch_mag_int_with_sigma2, two_ch_mag_int_with_sigma2, three_ch_mag_int_with_sigma2, ONE_OVER_SQRT_2_42, THREE_OVER_SQRT_2_42, FIVE_OVER_SQRT_2_42, SEVEN_OVER_SQRT_2_42);
+-      
++
+       // Calculation of a group of two terms in the bit metric involving product of psi and interference
+       psi_a_s[j] = prodsum_psi_a_epi16(psi_r_s[j], a_r_s[j], psi_i_s[j], a_i_s[j]);
+ 
+@@ -1605,7 +1638,7 @@ void nr_ulsch_qam64_qam64(c16_t *stream0_in,
+       // Detection of interference term
+       a_r_s[j] = interference_abs_64qam_epi16_256(psi_r_s[j], ch_mag_int_with_sigma2, two_ch_mag_int_with_sigma2, three_ch_mag_int_with_sigma2, ONE_OVER_SQRT_2_42, THREE_OVER_SQRT_2_42, FIVE_OVER_SQRT_2_42, SEVEN_OVER_SQRT_2_42);
+       a_i_s[j] = interference_abs_64qam_epi16_256(psi_i_s[j], ch_mag_int_with_sigma2, two_ch_mag_int_with_sigma2, three_ch_mag_int_with_sigma2, ONE_OVER_SQRT_2_42, THREE_OVER_SQRT_2_42, FIVE_OVER_SQRT_2_42, SEVEN_OVER_SQRT_2_42);
+-      
++
+       // Calculation of a group of two terms in the bit metric involving product of psi and interference
+       psi_a_s[j] = prodsum_psi_a_epi16_256(psi_r_s[j], a_r_s[j], psi_i_s[j], a_i_s[j]);
+ 
+diff --git a/openair1/PHY/defs_RU.h b/openair1/PHY/defs_RU.h
+index e72465c4a9..0601d728d0 100644
+--- a/openair1/PHY/defs_RU.h
++++ b/openair1/PHY/defs_RU.h
+@@ -272,6 +272,8 @@ typedef struct RU_proc_t_s {
+   pthread_t pthread_feptx;
+   /// pthread structure for asychronous RX/TX processing thread
+   pthread_t pthread_asynch_rxtx;
++  /// pthread structure for RU CIR ZMQ receiver thread
++  pthread_t pthread_cir_zmq;
+   /// flag to indicate first RX acquisition
+   int first_rx;
+   /// flag to indicate first TX transmission
+diff --git a/openair1/PHY/defs_nr_UE.h b/openair1/PHY/defs_nr_UE.h
+index 9d8683481d..33909c0550 100644
+--- a/openair1/PHY/defs_nr_UE.h
++++ b/openair1/PHY/defs_nr_UE.h
+@@ -52,8 +52,8 @@
+ #include "common_lib.h"
+ #include "fapi_nr_ue_interface.h"
+ #include "assertions.h"
+-#include "barrier.h"
+-#include "actor.h"
++#include "barrier/barrier.h"
++#include "actor/actor.h"
+ //#include "openair1/SCHED_NR_UE/defs.h"
+ 
+ #if ENABLE_RAL
+diff --git a/openair1/SIMULATION/NR_PHY/BLER_SIMULATIONS/AWGN/AWGN_results/bler_sigma_fit.csv b/openair1/SIMULATION/NR_PHY/BLER_SIMULATIONS/AWGN/AWGN_results/bler_sigma_fit.csv
+new file mode 100644
+index 0000000000..e69de29bb2
+diff --git a/openair2/E2AP/RAN_FUNCTION/CUSTOMIZED/ran_func_mac.c b/openair2/E2AP/RAN_FUNCTION/CUSTOMIZED/ran_func_mac.c
+index 13b6306a1c..880bf5f86c 100644
+--- a/openair2/E2AP/RAN_FUNCTION/CUSTOMIZED/ran_func_mac.c
++++ b/openair2/E2AP/RAN_FUNCTION/CUSTOMIZED/ran_func_mac.c
+@@ -60,14 +60,12 @@ bool read_mac_sm(void* data)
+     rd->dl_aggr_tbs = UE->mac_stats.dl.total_bytes;
+     rd->ul_aggr_tbs = UE->mac_stats.ul.total_bytes;
+ 
+-    if (is_dl_slot(rd->slot, &RC.nrmac[mod_id]->frame_structure)) {
+-      rd->dl_curr_tbs = UE->mac_stats.dl.current_bytes;
+-      rd->dl_sched_rb = UE->mac_stats.dl.current_rbs;
+-    }
+-    if (is_ul_slot(rd->slot, &RC.nrmac[mod_id]->frame_structure)) {
+-      rd->ul_curr_tbs = UE->mac_stats.ul.current_bytes;
+-      rd->ul_sched_rb = UE->mac_stats.ul.current_rbs;
+-    }
++    // Remove slot checks - slot is hardcoded to 0 anyway, and current_rbs
++    // already contains the accumulated stats across parallel slot processing
++    rd->dl_curr_tbs = UE->mac_stats.dl.current_bytes;
++    rd->dl_sched_rb = UE->mac_stats.dl.current_rbs;
++    rd->ul_curr_tbs = UE->mac_stats.ul.current_bytes;
++    rd->ul_sched_rb = UE->mac_stats.ul.current_rbs;
+ 
+     rd->rnti = UE->rnti;
+     rd->dl_aggr_prb = UE->mac_stats.dl.total_rbs;
+diff --git a/openair2/E2AP/flexric b/openair2/E2AP/flexric
+index df754a8553..1f571c18b8 160000
+--- a/openair2/E2AP/flexric
++++ b/openair2/E2AP/flexric
+@@ -1 +1 @@
+-Subproject commit df754a85537f6db255b5330b8d83eda6a2742f25
++Subproject commit 1f571c18b81deeb627ffce1102fea3f9da3f62a7
