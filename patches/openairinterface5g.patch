@@ -162,10 +162,10 @@ index 0000000000..92e06a28e2
 +cat /sys/devices/virtual/dmi/id/*family > host_product_family
 diff --git a/docker/Dockerfile.base.ubuntu.cuda b/docker/Dockerfile.base.ubuntu.cuda
 new file mode 100644
-index 0000000000..f4b7426323
+index 0000000000..5e25e8d826
 --- /dev/null
 +++ b/docker/Dockerfile.base.ubuntu.cuda
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,99 @@
 +#/*
 +# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
 +# * contributor license agreements.  See the NOTICE file distributed with
@@ -262,6 +262,9 @@ index 0000000000..f4b7426323
 +    cd cmake_targets && \
 +    mkdir -p log && \
 +    ./build_oai -I -w USRP --install-optional-packages
++
++# predownload the USRP firmware images
++RUN /usr/local/bin/uhd_images_downloader
 diff --git a/docker/Dockerfile.build.ubuntu.cuda b/docker/Dockerfile.build.ubuntu.cuda
 new file mode 100644
 index 0000000000..2218a33242
@@ -542,10 +545,10 @@ index 0000000000..bab504ef7c
 +
 diff --git a/docker/Dockerfile.gNB.ubuntu.cuda b/docker/Dockerfile.gNB.ubuntu.cuda
 new file mode 100644
-index 0000000000..b048532702
+index 0000000000..63f58d3605
 --- /dev/null
 +++ b/docker/Dockerfile.gNB.ubuntu.cuda
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,164 @@
 +#/*
 +# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
 +# * contributor license agreements.  See the NOTICE file distributed with
@@ -658,8 +661,9 @@ index 0000000000..b048532702
 +    /oai-ran/cmake_targets/ran_build/build/libuescope.so \
 +    /oai-ran/cmake_targets/ran_build/build/libdemapper*.so \
 +    /oai-ran/cmake_targets/ran_build/build/libreceiver*.so \
-+    #/oai-ran/cmake_targets/ran_build/build/libchn_emu.so \
-+    #/oai-ran/cmake_targets/ran_build/build/libcir_zmq.so \
++    /oai-ran/cmake_targets/ran_build/build/libchn_emu.so \
++    /oai-ran/cmake_targets/ran_build/build/libcir_file.so \
++    /oai-ran/cmake_targets/ran_build/build/libcir_zmq.so \
 +    /usr/local/lib/
 +
 +# to drop in incremental build results:
@@ -669,10 +673,12 @@ index 0000000000..b048532702
 +COPY --from=gnb-base /usr/local/bin/uhd_find_devices /usr/local/bin
 +COPY --from=gnb-base /usr/local/lib/libuhd.so.4.8.0 /usr/local/lib
 +COPY --from=gnb-base /usr/local/lib/uhd/utils/uhd_images_downloader.py /opt/oai-gnb/bin
++COPY --from=gnb-base /usr/local/share/uhd/images /usr/local/share/uhd/images
++
 +## Copy E2 SM models
 +COPY --from=gnb-build /usr/local/lib/flexric /usr/local/lib/flexric
 +
-+# predownload the USRP firmware images
++# update the USRP firmware images as needed
 +RUN python3 /opt/oai-gnb/bin/uhd_images_downloader.py
 +
 +RUN /bin/bash -c "ln -s /usr/local/lib/liboai_usrpdevif.so /usr/local/lib/liboai_device.so" && \
@@ -691,7 +697,10 @@ index 0000000000..b048532702
 +        /usr/local/lib/libtelnetsrv_ci.so \
 +        /usr/local/lib/libnrscope.so \
 +        /usr/local/lib/libuescope.so \
-+        /usr/local/lib/libuhd.so.4.8.0
++        /usr/local/lib/libuhd.so.4.8.0 \
++        /usr/local/lib/libchn_emu.so \
++        /usr/local/lib/libcir_file.so \
++        /usr/local/lib/libcir_zmq.so
 +
 +WORKDIR /opt/oai-gnb
 +#EXPOSE 2152/udp  # S1U, GTP/UDP
@@ -706,10 +715,10 @@ index 0000000000..b048532702
 +CMD ["/opt/oai-gnb/bin/nr-softmodem"]
 diff --git a/docker/Dockerfile.nrUE.ubuntu.cuda b/docker/Dockerfile.nrUE.ubuntu.cuda
 new file mode 100644
-index 0000000000..5cdb8fc815
+index 0000000000..44cb76bd38
 --- /dev/null
 +++ b/docker/Dockerfile.nrUE.ubuntu.cuda
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,142 @@
 +#/*
 +# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
 +# * contributor license agreements.  See the NOTICE file distributed with
@@ -824,8 +833,9 @@ index 0000000000..5cdb8fc815
 +COPY --from=nr-ue-base /usr/local/bin/uhd_find_devices /usr/local/bin
 +COPY --from=nr-ue-base /usr/local/lib/libuhd.so.4.8.0 /usr/local/lib
 +COPY --from=nr-ue-base /usr/local/lib/uhd/utils/uhd_images_downloader.py /opt/oai-nr-ue/bin
++COPY --from=nr-ue-base /usr/local/share/uhd/images /usr/local/share/uhd/images
 +
-+# predownload the USRP firmware images
++# update the USRP firmware images as needed
 +RUN python3 /opt/oai-nr-ue/bin/uhd_images_downloader.py
 +
 +RUN /bin/bash -c "ln -s /usr/local/lib/liboai_usrpdevif.so /usr/local/lib/liboai_device.so" && \
@@ -866,22 +876,18 @@ index 24870544b8..0eac7b14d6 100644
    initTpool(get_softmodem_params()->threadPoolConfig, &gNB->threadPool, cpumeas(CPUMEAS_GETSTATE));
    // ULSCH decoder result FIFO
 diff --git a/executables/nr-ru.c b/executables/nr-ru.c
-index de3a4b7875..582c4568bc 100644
+index de3a4b7875..a74370712e 100644
 --- a/executables/nr-ru.c
 +++ b/executables/nr-ru.c
-@@ -18,6 +18,11 @@
-  * For more information about the OpenAirInterface (OAI) Software Alliance:
+@@ -19,6 +19,7 @@
   *      contact@openairinterface.org
   */
-+ //#define CHANNEL_EMULATION_RX
-+ //#define CHANNEL_EMULATION_TX
-+ // #define DUMP_DATA_RX
-+ // #define DUMP_DATA_TX
-+ // #define PRINT_TIMES
  
++
  #define _GNU_SOURCE
  #include <stdio.h>
-@@ -28,6 +33,9 @@
+ #include <stdlib.h>
+@@ -28,6 +29,9 @@
  #include <linux/sched.h>
  #include <sys/sysinfo.h>
  #include <math.h>
@@ -891,7 +897,17 @@ index de3a4b7875..582c4568bc 100644
  
  #include "common/utils/nr/nr_common.h"
  #include "common/utils/assertions.h"
-@@ -292,7 +300,7 @@ void fh_if5_south_in(RU_t *ru,
+@@ -68,6 +72,9 @@ static int DEFRUTPCORES[] = {-1,-1,-1,-1};
+ #include <nfapi/oai_integration/vendor_ext.h>
+ #include "executables/nr-softmodem-common.h"
+ 
++// Add this near the top of the file with other includes:
++#include "plugins/common/src/plugins.h"
++
+ static void NRRCconfig_RU(configmodule_interface_t *cfg);
+ 
+ /*************************************************************/
+@@ -292,7 +299,7 @@ void fh_if5_south_in(RU_t *ru,
                       int *tti) {
    NR_DL_FRAME_PARMS *fp = ru->nr_frame_parms;
    RU_proc_t *proc = &ru->proc;
@@ -900,73 +916,7 @@ index de3a4b7875..582c4568bc 100644
    start_meas(&ru->rx_fhaul);
  
    ru->ifdevice.trx_read_func2(&ru->ifdevice, &proc->timestamp_rx, NULL, fp->get_samples_per_slot(*tti, fp));
-@@ -561,6 +569,65 @@ void fh_if4p5_north_out(RU_t *ru) {
-   stop_meas(&ru->tx_fhaul);
- }
- 
-+#if defined(DUMP_DATA_RX) || defined(DUMP_DATA_TX)
-+static bool dump_data(RU_t *ru, int slot, const char *filename, NR_DL_FRAME_PARMS *fp, void *p[], const char *direction, int timing_offset)
-+{
-+  // Read cyclic prefix length and FFT size
-+  uint16_t fft_size = fp->ofdm_symbol_size;
-+  uint16_t cp_length0 = fp->nb_prefix_samples0;
-+  uint16_t cp_length = fp->nb_prefix_samples;
-+  int samples_per_frame = fp->samples_per_frame;
-+  int sample_offset = fp->get_samples_slot_timestamp(slot, fp, 0);
-+  int nb;
-+  if (strcmp(direction, "rx") == 0) {
-+    nb = ru->nb_rx;
-+  } else {
-+    nb = ru->nb_tx;
-+  }
-+  int samples_per_slot = fp->get_samples_per_slot(slot, fp);
-+
-+  bool dump_data = false;
-+  for (int i = 0; i < nb; i++) {
-+    const c16_t *p_i = (const c16_t *)p[i];
-+    for (int j = 0; j < 100; j++) {
-+      if ( (p_i[j].r != 0) || (p_i[j].i != 0)) {
-+        dump_data = true;
-+        break;
-+      }
-+    }
-+  }
-+  if (dump_data) {
-+    FILE *dump_file = fopen(filename, "wb");
-+    if (dump_file) {
-+      void *data = NULL;
-+      if (strcmp(direction, "rx") == 0) {
-+        data = (void*)(ru->common.rxdata[0]);
-+      } else {
-+        data = (void*)(ru->common.txdata[0]);
-+      }
-+      // Apply timing offset and symbol alignment
-+      fwrite(&samples_per_slot, sizeof(int), 1, dump_file);
-+      fwrite(&nb, sizeof(int), 1, dump_file);
-+      fwrite(&fft_size, sizeof(uint16_t), 1, dump_file);
-+      fwrite(&cp_length0, sizeof(uint16_t), 1, dump_file);
-+      fwrite(&cp_length, sizeof(uint16_t), 1, dump_file);
-+      fwrite(&timing_offset, sizeof(int), 1, dump_file);
-+      fwrite(&samples_per_frame, sizeof(int), 1, dump_file);
-+      fwrite(&sample_offset, sizeof(int), 1, dump_file);
-+
-+      for (int ant = 0; ant < nb; ant++) {
-+        fwrite(data, sizeof(int32_t), samples_per_frame, dump_file);
-+      }
-+      fclose(dump_file);
-+    }
-+  }
-+
-+  return dump_data;
-+}
-+#endif
-+
-+
-+
- static void rx_rf(RU_t *ru, int *frame, int *slot)
- {
-   RU_proc_t *proc = &ru->proc;
-@@ -583,6 +650,7 @@ static void rx_rf(RU_t *ru, int *frame, int *slot)
+@@ -583,6 +590,7 @@ static void rx_rf(RU_t *ru, int *frame, int *slot)
    unsigned int rxs;
    rxs = ru->rfdevice.trx_read_func(&ru->rfdevice, &ts, rxp, samples_per_slot, nb);
  
@@ -974,31 +924,22 @@ index de3a4b7875..582c4568bc 100644
    VCD_SIGNAL_DUMPER_DUMP_FUNCTION_BY_NAME( VCD_SIGNAL_DUMPER_FUNCTIONS_TRX_READ, 0 );
    proc->timestamp_rx = ts-ru->ts_offset;
  
-@@ -602,12 +670,34 @@ static void rx_rf(RU_t *ru, int *frame, int *slot)
+@@ -602,12 +610,25 @@ static void rx_rf(RU_t *ru, int *frame, int *slot)
      }
    }
  
-+  // Dump the received data before channel emulation
-+  #ifdef DUMP_DATA_RX
-+  const bool dump = dump_data(ru, *slot, "/tmp/rxdata_dump_input.bin", fp, rxp, "rx", ru->N_TA_offset);
-+  #endif
-+
-+  // Emulates the channel
-+  #ifdef CHANNEL_EMULATION_RX
-+  // Offset in the ru->common.rxdata buffer from which the slot samples start
-+  const int data_offset = fp->get_samples_slot_timestamp(*slot, fp, 0) - ru->N_TA_offset;
-+  // Read the channel impulse response from the ZMQ interface
-+  const cir_data_t *cir_data = cir_zmq_interface.read();
-+  chn_emu_interface.compute(ru, *slot, fp, "rx", data_offset, cir_data->taps,
-+                            cir_data->tap_indices, cir_data->noise_std);
-+  #endif
-+
-+  // Dump the received data after channel emulation
-+  #ifdef DUMP_DATA_RX
-+  if (dump) {
-+    dump_data(ru, *slot, "/tmp/rxdata_dump_output.bin", fp, rxp, "rx", ru->N_TA_offset);
++  // Emulates the channel using the plugin system (if enabled)
++  if (is_channel_emulation_enabled()) {
++    // Offset in the ru->common.rxdata buffer from which the slot samples start
++    const int data_offset = fp->get_samples_slot_timestamp(*slot, fp, 0) - ru->N_TA_offset;
++    // Read CIR data and update channel emulator sigma values
++    const void *cir_data = channel_emulator_cir_read_and_apply();
++    // Apply channel emulation
++    chn_emu_interface.compute(ru, *slot, fp,
++                               fp->ofdm_symbol_size + fp->nb_prefix_samples0,  // samples_first_symbol
++                               fp->ofdm_symbol_size + fp->nb_prefix_samples,   // samples_other_symbols
++                               "rx", data_offset, cir_data);
 +  }
-+  #endif
 +
    // compute system frame number (SFN) according to O-RAN-WG4-CUS.0-v02.00 (using alpha=beta=0)
    //  this assumes that the USRP has been synchronized to the GPS time
@@ -1010,35 +951,27 @@ index de3a4b7875..582c4568bc 100644
    proc->frame_rx    = (proc->timestamp_rx / (fp->samples_per_subframe*10))&1023;
    proc->tti_rx = fp->get_slot_from_timestamp(proc->timestamp_rx,fp);
    // synchronize first reception to frame 0 subframe 0
-@@ -788,6 +878,27 @@ void tx_rf(RU_t *ru, int frame,int slot, uint64_t timestamp)
+@@ -788,9 +809,18 @@ void tx_rf(RU_t *ru, int frame,int slot, uint64_t timestamp)
    for (int i = 0; i < nt; i++)
      txp[i] = (void *)&ru->common.txdata[i][fp->get_samples_slot_timestamp(slot, fp, 0)] - sf_extension * sizeof(int32_t);
  
-+  #ifdef DUMP_DATA_TX
-+  const bool dump = dump_data(ru, slot, "/tmp/txdata_dump_input.bin", fp, txp, "tx", sf_extension);
-+  #endif
-+
-+  // Emulates the channel
-+  #ifdef CHANNEL_EMULATION_TX
-+  // Offset in the ru->common.txdata buffer from which the slot samples start
-+  const int data_offset = fp->get_samples_slot_timestamp(slot, fp, 0) - sf_extension;
-+  // Read the channel impulse response from the ZMQ interface
-+  const cir_data_t *cir_data = cir_zmq_interface.read();
-+  chn_emu_interface.compute(ru, slot, fp, "tx", data_offset, cir_data->taps,
-+                            cir_data->tap_indices, cir_data->noise_std);
-+  #endif
-+
-+  // Dump the transmitted data after channel emulation
-+  #ifdef DUMP_DATA_TX
-+  if (dump) {
-+    dump_data(ru, slot, "/tmp/txdata_dump_output.bin", fp, txp, "tx", sf_extension);
++  // Apply DL channel emulation before trx_write so the UE receives the faded signal
++  if (is_channel_emulation_enabled()) {
++    const int data_offset = fp->get_samples_slot_timestamp(slot, fp, 0) - sf_extension;
++    const void *cir_data = channel_emulator_cir_read_and_apply();
++    chn_emu_interface.compute(ru, slot, fp,
++                               fp->ofdm_symbol_size + fp->nb_prefix_samples0,  // samples_first_symbol
++                               fp->ofdm_symbol_size + fp->nb_prefix_samples,   // samples_other_symbols
++                               "tx", data_offset, cir_data);
 +  }
-+  #endif
 +
    VCD_SIGNAL_DUMPER_DUMP_VARIABLE_BY_NAME(VCD_SIGNAL_DUMPER_VARIABLES_TRX_TST, (timestamp + ru->ts_offset) & 0xffffffff);
    VCD_SIGNAL_DUMPER_DUMP_FUNCTION_BY_NAME(VCD_SIGNAL_DUMPER_FUNCTIONS_TRX_WRITE, 1);
-   // prepare tx buffer pointers
-@@ -858,7 +969,7 @@ static void fill_rf_config(RU_t *ru, char *rf_config_file)
+-  // prepare tx buffer pointers
+   uint32_t txs = ru->rfdevice.trx_write_func(&ru->rfdevice,
+                                              timestamp + ru->ts_offset - sf_extension,
+                                              txp,
+@@ -858,7 +888,7 @@ static void fill_rf_config(RU_t *ru, char *rf_config_file)
      }
  
      cfg->tx_gain[i] = ru->att_tx;
@@ -1047,7 +980,7 @@ index de3a4b7875..582c4568bc 100644
            i, cfg->tx_gain[i],cfg->tx_freq[i]);
    }
  
-@@ -1131,7 +1242,21 @@ void *ru_thread(void *param)
+@@ -1131,7 +1161,21 @@ void *ru_thread(void *param)
    struct timespec slot_start;
    clock_gettime(CLOCK_MONOTONIC, &slot_start);
  
@@ -1069,7 +1002,7 @@ index de3a4b7875..582c4568bc 100644
      if (slot==(fp->slots_per_frame-1)) {
        slot=0;
        frame++;
-@@ -1242,6 +1367,28 @@ void *ru_thread(void *param)
+@@ -1242,6 +1286,28 @@ void *ru_thread(void *param)
                                           .slot_rx = proc->tti_rx,
                                           .timestamp_tx = proc->timestamp_tx};
      pushNotifiedFIFO(&gNB->L1_tx_out, resTx);
@@ -1098,7 +1031,7 @@ index de3a4b7875..582c4568bc 100644
    }
  
    ru_thread_status = 0;
-@@ -1482,7 +1629,7 @@ void set_function_spec_param(RU_t *ru)
+@@ -1482,7 +1548,7 @@ void set_function_spec_param(RU_t *ru)
          ru->do_prach             = 0;                       // no prach processing in RU
          ru->feprx                = nr_fep_tp;     // this is frequency-shift + DFTs
          ru->feptx_ofdm           = nr_feptx_tp;             // this is fep with idft and precoding
@@ -1108,19 +1041,20 @@ index de3a4b7875..582c4568bc 100644
          ru->fh_north_out         = NULL;                    // no outgoing fronthaul to north
          ru->nr_start_if          = NULL;                    // no if interface
 diff --git a/executables/nr-softmodem-common.h b/executables/nr-softmodem-common.h
-index 61823d43cd..8eb9b30590 100644
+index 61823d43cd..526e46bd98 100644
 --- a/executables/nr-softmodem-common.h
 +++ b/executables/nr-softmodem-common.h
-@@ -96,6 +96,7 @@
+@@ -96,6 +96,8 @@
  #define CONFIG_HLP_TELN          "Start embedded telnet server \n"
  #define CONFIG_HLP_SNR           "Set average SNR in dB (for --siml1 option)\n"
  #define CONFIG_HLP_NOS1          "Disable s1 interface\n"
-+#define CONFIG_HLP_NUMTAPS       "Set the number of channel taps for CIR emulation (default: 3)\n"
++#define CONFIG_HLP_CIRFOLDER     "Path to CIR folder for channel emulation (enables channel emulation when set)\n"
++#define CONFIG_HLP_CIRZMQTAPS   "Number of CIR taps for ZMQ-based channel emulation (enables cir_zmq when set)\n"
  
  /*--------------------------------------------------------------------------------------------------------------------------------*/
  /*                                            command line parameters for LOG utility                                             */
 diff --git a/executables/nr-softmodem.c b/executables/nr-softmodem.c
-index d8df770cb8..6ad9f9aa38 100644
+index d8df770cb8..8c0a101bf6 100644
 --- a/executables/nr-softmodem.c
 +++ b/executables/nr-softmodem.c
 @@ -87,6 +87,8 @@ unsigned short config_frames[4] = {2,9,11,13};
@@ -1132,15 +1066,7 @@ index d8df770cb8..6ad9f9aa38 100644
  
  pthread_cond_t nfapi_sync_cond;
  pthread_mutex_t nfapi_sync_mutex;
-@@ -103,6 +105,7 @@ unsigned int mmapped_dma=0;
- uint64_t downlink_frequency[MAX_NUM_CCs][4];
- int32_t uplink_frequency_offset[MAX_NUM_CCs][4];
- char *uecap_file;
-+uint32_t num_taps = 3; // Default value for channel emulation, can be configured via command line
- 
- runmode_t mode = normal_txrx;
- 
-@@ -187,7 +190,7 @@ void exit_function(const char *file, const char *function, const int line, const
+@@ -187,7 +189,7 @@ void exit_function(const char *file, const char *function, const int line, const
  
  static int create_gNB_tasks(ngran_node_t node_type, configmodule_interface_t *cfg)
  {
@@ -1149,7 +1075,7 @@ index d8df770cb8..6ad9f9aa38 100644
    uint32_t                        gnb_id_start = 0;
    uint32_t                        gnb_id_end = gnb_id_start + gnb_nb;
    LOG_D(GNB_APP, "%s(gnb_nb:%d)\n", __FUNCTION__, gnb_nb);
-@@ -294,7 +297,7 @@ static int create_gNB_tasks(ngran_node_t node_type, configmodule_interface_t *cf
+@@ -294,7 +296,7 @@ static int create_gNB_tasks(ngran_node_t node_type, configmodule_interface_t *cf
        return -1;
      }
  
@@ -1158,17 +1084,7 @@ index d8df770cb8..6ad9f9aa38 100644
      if((is_x2ap_enabled() || IS_SA_MODE(get_softmodem_params())) && (node_type != ngran_gNB_CUCP)) {
        if (itti_create_task (TASK_GTPV1_U, &gtpv1uTask, NULL) < 0) {
          LOG_E(GTPU, "Create task for GTPV1U failed\n");
-@@ -538,6 +541,9 @@ int main( int argc, char **argv ) {
-     exit(-1);
-   }
- 
-+  // Validate num_taps parameter
-+  AssertFatal(num_taps > 0, "num_taps must be greater than 0, got %d\n", num_taps);
-+
-   if (!has_cap_sys_nice())
-     LOG_W(UTIL,
-           "no SYS_NICE capability: cannot set thread priority and affinity, consider running with sudo for optimum performance\n");
-@@ -633,22 +639,21 @@ int main( int argc, char **argv ) {
+@@ -633,14 +635,20 @@ int main( int argc, char **argv ) {
      for (ru_id=0; ru_id<RC.nb_RU; ru_id++) {
        RC.ru[ru_id]->rf_map.card=0;
        RC.ru[ru_id]->rf_map.chain=CC_id+chain_offset;
@@ -1182,10 +1098,16 @@ index d8df770cb8..6ad9f9aa38 100644
  
    config_sync_var=0;
  
--
++  // Init plugins (pass CLI parameters and frame_parms for channel emulation)
++  {
++    NR_DL_FRAME_PARMS *fp = &RC.gNB[0]->frame_parms;
++    init_plugins(fp);
++  }
++  printf("\nInitialized plugins\n\n");
+ 
  #ifdef E2_AGENT
  
- //////////////////////////////////
+@@ -648,7 +656,7 @@ int main( int argc, char **argv ) {
  //////////////////////////////////
  //// Init the E2 Agent
  
@@ -1194,28 +1116,8 @@ index d8df770cb8..6ad9f9aa38 100644
    e2_agent_args_t oai_args = RCconfig_NR_E2agent();
  
    if (oai_args.enabled) {
-diff --git a/executables/nr-softmodem.h b/executables/nr-softmodem.h
-index ecbf5d8759..a301a94740 100644
---- a/executables/nr-softmodem.h
-+++ b/executables/nr-softmodem.h
-@@ -27,6 +27,7 @@
-   {"U" ,                    CONFIG_HLP_ULBM_PHYTEST,   0,                .u64ptr=&ulsch_slot_bitmap,          .defintval=0,                     TYPE_UINT64, 0},        \
-   {"usrp-tx-thread-config", CONFIG_HLP_USRP_THREAD,    0,                .iptr=&usrp_tx_thread,               .defstrval=0,                     TYPE_INT,    0},        \
-   {"uecap_file",            CONFIG_HLP_UECAP_FILE,     0,                .strptr=&uecap_file,                 .defstrval="./uecap_ports1.xml",  TYPE_STRING, 0},        \
-+  {"num-taps",              CONFIG_HLP_NUMTAPS,        0,                .uptr=&num_taps,                     .defintval=3,                     TYPE_UINT,   0},        \
- }
- // clang-format on
- 
-@@ -39,6 +40,7 @@ extern uint32_t target_ul_bw;
- extern uint64_t dlsch_slot_bitmap;
- extern uint64_t ulsch_slot_bitmap;
- extern char *uecap_file;
-+extern uint32_t num_taps;
- 
- // In nr-gnb.c
- extern void init_gNB();
 diff --git a/executables/nr-uesoftmodem.c b/executables/nr-uesoftmodem.c
-index 8b331e4976..f3b4a0ebfa 100644
+index 8b331e4976..b235e02a3e 100644
 --- a/executables/nr-uesoftmodem.c
 +++ b/executables/nr-uesoftmodem.c
 @@ -88,6 +88,7 @@ unsigned short config_frames[4] = {2,9,11,13};
@@ -1254,7 +1156,7 @@ index 8b331e4976..f3b4a0ebfa 100644
    AssertFatal(ret_loader == 0, "error loading LDPC library\n");
  
 +  // todo: decided what/which plugins are linked to uesoftmodem vs. just softmodem
-+  init_plugins();
++  init_plugins(NULL);
 +  printf("\nInitialized plugins\n\n");
 +
 +  // now everyting is initialized for worker thread modules
@@ -1529,6 +1431,22 @@ index 3fece46ac8..826298acd2 100644
    for (int pusch_id = 0; pusch_id < nrLDPC_slot_decoding_parameters->nb_TBs; pusch_id++) {
      nrLDPC_TB_decoding_parameters_t *nrLDPC_TB_decoding_parameters = &nrLDPC_slot_decoding_parameters->TBs[pusch_id];
      for (int r = 0; r < nrLDPC_TB_decoding_parameters->C; r++) {
+diff --git a/openair1/PHY/CODING/nrLDPC_decoder/nrLDPC_decoder.c b/openair1/PHY/CODING/nrLDPC_decoder/nrLDPC_decoder.c
+index d3b9a58da1..4e369950e7 100644
+--- a/openair1/PHY/CODING/nrLDPC_decoder/nrLDPC_decoder.c
++++ b/openair1/PHY/CODING/nrLDPC_decoder/nrLDPC_decoder.c
+@@ -164,6 +164,11 @@ int32_t LDPCinit()
+   return 0;
+ }
+ 
++int32_t LDPCthreadinit()
++{
++  return 0;
++}
++
+ int32_t LDPCshutdown()
+ {
+   return 0;
 diff --git a/openair1/PHY/CODING/nrLDPC_defs.h b/openair1/PHY/CODING/nrLDPC_defs.h
 index 9abb048d83..cfb766c953 100644
 --- a/openair1/PHY/CODING/nrLDPC_defs.h
@@ -1580,7 +1498,7 @@ index 0316ebadc5..8d3ba6339e 100644
    AssertFatal(itf->LDPCinit() == 0, "error starting LDPC library %s %s\n", libname, version);
  
 diff --git a/openair1/PHY/INIT/nr_init.c b/openair1/PHY/INIT/nr_init.c
-index 60bc63dac4..b75f7bdb65 100644
+index 60bc63dac4..0d97317281 100644
 --- a/openair1/PHY/INIT/nr_init.c
 +++ b/openair1/PHY/INIT/nr_init.c
 @@ -43,6 +43,8 @@
@@ -1615,14 +1533,10 @@ index 60bc63dac4..b75f7bdb65 100644
  void phy_init_nr_gNB(PHY_VARS_gNB *gNB)
  {
    // shortcuts
-@@ -138,6 +156,16 @@ void phy_init_nr_gNB(PHY_VARS_gNB *gNB)
+@@ -138,6 +156,12 @@ void phy_init_nr_gNB(PHY_VARS_gNB *gNB)
    int ret_loader = load_nrLDPC_coding_interface(NULL, &gNB->nrLDPC_coding_interface);
    AssertFatal(ret_loader == 0, "error loading LDPC library\n");
  
-+  // load plugin extensions
-+  init_plugins();
-+  printf("\nInitialized plugins\n\n");
-+
 +  // now everyting is initialized for worker thread modules
 +  if (initThreadHook != &worker_thread_init) {
 +      prev_initThreadHook = initThreadHook;
@@ -1632,7 +1546,7 @@ index 60bc63dac4..b75f7bdb65 100644
    gNB->max_nb_pdsch = MAX_MOBILES_PER_GNB;
    init_delay_table(fp->ofdm_symbol_size, MAX_DELAY_COMP, NR_MAX_OFDM_SYMBOL_SIZE, fp->delay_table);
    init_delay_table(128, MAX_DELAY_COMP, 128, fp->delay_table128);
-@@ -184,8 +212,8 @@ void phy_init_nr_gNB(PHY_VARS_gNB *gNB)
+@@ -184,8 +208,8 @@ void phy_init_nr_gNB(PHY_VARS_gNB *gNB)
      for (int j = 0; j < Ptx; j++)
        common_vars->txdataF[i][j] = (c16_t*)malloc16_clear(fp->samples_per_frame_wCP * sizeof(c16_t));
    }
@@ -1643,7 +1557,7 @@ index 60bc63dac4..b75f7bdb65 100644
  
    // PRACH
    prach_vars->rxsigF = (int16_t **)malloc16_clear(Prx*sizeof(int16_t*));
-@@ -286,6 +314,7 @@ void phy_free_nr_gNB(PHY_VARS_gNB *gNB)
+@@ -286,6 +310,7 @@ void phy_free_nr_gNB(PHY_VARS_gNB *gNB)
  
    free_nrLDPC_coding_interface(&gNB->nrLDPC_coding_interface);
  
@@ -1651,7 +1565,7 @@ index 60bc63dac4..b75f7bdb65 100644
  }
  
  //Adding nr_schedule_handler
-@@ -368,7 +397,7 @@ void nr_phy_config_request(NR_PHY_Config_t *phy_config)
+@@ -368,7 +393,7 @@ void nr_phy_config_request(NR_PHY_Config_t *phy_config)
  
    uint64_t dl_bw_khz = (12*gNB_config->carrier_config.dl_grid_size[gNB_config->ssb_config.scs_common.value].value)*(15<<gNB_config->ssb_config.scs_common.value);
    fp->dl_CarrierFreq = ((dl_bw_khz>>1) + gNB_config->carrier_config.dl_frequency.value)*1000 ;
@@ -1660,7 +1574,7 @@ index 60bc63dac4..b75f7bdb65 100644
    uint64_t ul_bw_khz = (12*gNB_config->carrier_config.ul_grid_size[gNB_config->ssb_config.scs_common.value].value)*(15<<gNB_config->ssb_config.scs_common.value);
    fp->ul_CarrierFreq = ((ul_bw_khz>>1) + gNB_config->carrier_config.uplink_frequency.value)*1000 ;
  
-@@ -385,7 +414,7 @@ void nr_phy_config_request(NR_PHY_Config_t *phy_config)
+@@ -385,7 +410,7 @@ void nr_phy_config_request(NR_PHY_Config_t *phy_config)
          (unsigned long long)fp->ul_CarrierFreq);
  
    nr_init_frame_parms(gNB_config, fp);
@@ -1669,7 +1583,7 @@ index 60bc63dac4..b75f7bdb65 100644
  
    if (RC.gNB[Mod_id]->configured == 1) {
      LOG_E(PHY,"Already gNB already configured, do nothing\n");
-@@ -457,7 +486,7 @@ void init_nr_transport(PHY_VARS_gNB *gNB)
+@@ -457,7 +482,7 @@ void init_nr_transport(PHY_VARS_gNB *gNB)
          if(cfg->tdd_table.max_tdd_periodicity_list[i].max_num_of_symbol_per_slot_list[j].slot_config.value == 1) { // UL symbol
            nb_ul_slots_period++;
            break;

@@ -1,10 +1,10 @@
 #!/bin/bash
 #
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 
-# supress outputs from pushd and popd
+# suppress outputs from pushd and popd
 function pushd() {
   command pushd "$@" > /dev/null
 }
@@ -14,7 +14,11 @@ function popd() {
 }
 
 function usage() {
-    echo "Usage: $0 [-h|--help] [--force] [--ci] [--verbose] [--dry-run]"
+    echo "Usage: $0 [-h|--help] [--force] [--ci] [--verbose] [--dry-run] [--branch <branch|tag>]"
+    echo ""
+    echo "Options:"
+    echo "  --branch <branch|tag>  Clone a specific branch or tag from the UHD repository"
+    echo "                         (default: use the repository's default branch)"
     exit 1
 }
 
@@ -48,6 +52,7 @@ FORCE=0
 CI=0
 VERBOSE=0
 DRYRUN=0
+BRANCH=""
 
 # Parse command-line arguments
 while [[ $# -gt 0 ]]; do
@@ -57,6 +62,7 @@ while [[ $# -gt 0 ]]; do
         --ci) CI=1 ; shift ;;
         --verbose) VERBOSE=1 ; shift ;;
         --dry-run) DRYRUN=1 ; shift ;;
+        --branch) BRANCH="$2" ; shift 2 ;;
         *) shift ;; # ignore other arguments
     esac
 done
@@ -97,7 +103,11 @@ execute sudo apt install -y \
 execute mkdir -p "${base_dir}/ext/"
 
 # Clone UHD repository
-execute git clone https://github.com/EttusResearch/uhd.git "${base_dir}/ext/uhd"
+BRANCH_OPT=""
+if [ -n "$BRANCH" ]; then
+    BRANCH_OPT="-b $BRANCH"
+fi
+execute git clone $BRANCH_OPT https://github.com/EttusResearch/uhd.git "${base_dir}/ext/uhd"
 
 execute pushd  "${base_dir}/ext/uhd/host"
 execute mkdir build

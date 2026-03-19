@@ -1,0 +1,227 @@
+#
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+name: Tutorial Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'tutorials/**'
+      - '.github/workflows/test-tutorials.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'tutorials/**'
+      - '.github/workflows/test-tutorials.yml'
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.10'
+
+jobs:
+  validate-manifests:
+    name: Validate Tutorial Manifests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install pyyaml pytest
+
+      - name: Validate manifests
+        run: |
+          cd tutorials
+          python3 testing/framework/test_runner.py --validate
+
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: validate-manifests
+
+    strategy:
+      fail-fast: false
+      matrix:
+        tutorial:
+          - neural_demapper
+          - neural_receiver
+          - ldpc_cuda
+          - ric_xapps
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pyyaml numpy
+          pip install pytest-timeout pytest-xdist
+
+      - name: Run unit tests for ${{ matrix.tutorial }}
+        run: |
+          cd tutorials
+          export CI_MODE=true
+          python3 testing/framework/test_runner.py \
+            --tutorial ${{ matrix.tutorial }} \
+            --type unit \
+            --ci \
+            --verbose
+        continue-on-error: true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results-${{ matrix.tutorial }}
+          path: |
+            tutorials/${{ matrix.tutorial }}/test-results/
+            tutorials/${{ matrix.tutorial }}/*.log
+
+  # GPU-accelerated tests (requires self-hosted runner with GPU)
+  gpu-tests:
+    name: GPU Unit Tests
+    runs-on: [self-hosted, linux, gpu]
+    needs: validate-manifests
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'test-gpu')
+
+    strategy:
+      fail-fast: false
+      matrix:
+        tutorial:
+          - neural_demapper
+          - neural_receiver
+          - ldpc_cuda
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Check CUDA availability
+        run: |
+          nvidia-smi
+          nvcc --version || echo "NVCC not found"
+
+      - name: Install dependencies
+        run: |
+          pip install pytest pyyaml numpy
+          pip install pytest-timeout
+          # Tutorial-specific dependencies would be installed here
+
+      - name: Run GPU tests for ${{ matrix.tutorial }}
+        run: |
+          cd tutorials
+          export CI_MODE=true
+          python3 testing/framework/test_runner.py \
+            --tutorial ${{ matrix.tutorial }} \
+            --ci \
+            --verbose
+        timeout-minutes: 30
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: gpu-test-results-${{ matrix.tutorial }}
+          path: |
+            tutorials/${{ matrix.tutorial }}/test-results/
+            tutorials/${{ matrix.tutorial }}/*.log
+
+  # Integration tests (requires full system setup)
+  integration-tests:
+    name: Integration Tests
+    runs-on: [self-hosted, linux, gpu, 5g-testbed]
+    needs: [unit-tests]
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'test-integration')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up system
+        run: |
+          # Start 5G system
+          cd /home/nvidia/projects/sionna-rk
+          ./scripts/start_system.sh rfsim_arm64
+
+          # Wait for system to be ready
+          sleep 30
+
+      - name: Run integration tests
+        run: |
+          cd tutorials
+          python3 testing/framework/test_runner.py \
+            --tutorial neural_demapper neural_receiver ldpc_cuda \
+            --type integration \
+            --verbose
+        timeout-minutes: 60
+
+      - name: Collect logs
+        if: always()
+        run: |
+          mkdir -p test-artifacts
+          docker logs oai-gnb > test-artifacts/gnb.log 2>&1 || true
+          docker logs oai-nr-ue > test-artifacts/ue.log 2>&1 || true
+
+      - name: Upload integration test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: integration-test-results
+          path: |
+            test-artifacts/
+            tutorials/*/test-results/
+
+      - name: Cleanup
+        if: always()
+        run: |
+          ./scripts/stop_system.sh
+
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [validate-manifests, unit-tests]
+    if: always()
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Generate summary
+        run: |
+          echo "# Tutorial Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Test Results" >> $GITHUB_STEP_SUMMARY
+
+          if [ -d test-results-* ]; then
+            echo "✅ Tests completed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ No test results found" >> $GITHUB_STEP_SUMMARY
+          fi
+

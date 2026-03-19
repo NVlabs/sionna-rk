@@ -25,20 +25,32 @@ if (ENABLE_CUDA)
     message(FATAL_ERROR "TensorRT installation missing ${TensorRT_INCLUDE_DIR} ${TensorRT_LIBRARY} ${TensorRT_PARSER_LIBRARY} ${TensorRT_ONNX_LIBRARY}")
   endif ()
 
+  find_package(CUDAToolkit REQUIRED)
+  enable_language(CUDA)
+
   set(PHY_DEMAPPER_TRT_RUNTIME_SRC
     src/runtime/data_processing.cu
     src/runtime/trt_demapper.cpp
   )
 
-  cuda_add_library( demapper_trt MODULE ${PHY_DEMAPPER_TRT_RUNTIME_SRC}
+  add_library(demapper_trt MODULE ${PHY_DEMAPPER_TRT_RUNTIME_SRC}
     src/nr_demapper_trt.c
   )
-  set_target_properties(demapper_trt PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
-  target_include_directories(demapper_trt PRIVATE ${TensorRT_INCLUDE_DIR})
+  if (ENABLE_DGX_OPTIMIZATIONS)
+    set_target_properties(demapper_trt PROPERTIES CUDA_ARCHITECTURES "120")
+  else ()
+    set_target_properties(demapper_trt PROPERTIES CUDA_ARCHITECTURES "87")
+  endif ()
+  set_target_properties(demapper_trt PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+    CUDA_RESOLVE_DEVICE_SYMBOLS ON
+    POSITION_INDEPENDENT_CODE ON
+  )
+  target_include_directories(demapper_trt PRIVATE ${TensorRT_INCLUDE_DIR} ${CUDAToolkit_INCLUDE_DIRS})
   target_compile_options(demapper_trt PRIVATE -ftls-model=global-dynamic)
   target_link_options(demapper_trt PRIVATE -ftls-model=global-dynamic)
   target_compile_options(demapper_trt PRIVATE -Wno-deprecated-declarations -Wno-error=unused-variable -Wno-error=unused-function -Wno-error=unused-result)
-  target_link_libraries(demapper_trt ${TensorRT_LIBRARY})
+  target_link_libraries(demapper_trt PRIVATE ${TensorRT_LIBRARY} CUDA::cudart pthread)
 
   add_dependencies(nr-uesoftmodem demapper_trt)
   add_dependencies(nr-softmodem demapper_trt)

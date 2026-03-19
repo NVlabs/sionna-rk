@@ -1,9 +1,11 @@
 /*
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 #include "plugins.h"
 #include <stddef.h>
+#include <string.h>
+#include <stdio.h>
 
 // START marker-plugins
 // global entry points for the tutorial plugins
@@ -11,14 +13,17 @@ SPDX-License-Identifier: Apache-2.0
 
 demapper_interface_t demapper_interface = {0};
 receiver_interface_t receiver_interface = {0};
+chn_emu_interface_t chn_emu_interface = {0};
+cir_file_interface_t cir_file_interface = {0};
+cir_zmq_interface_t cir_zmq_interface = {0};
 
-void init_plugins()
+void init_plugins(const NR_DL_FRAME_PARMS *fp)
 {
     // insert your plugin init here.
 
-    load_demapper_lib( NULL, &demapper_interface);
-
-    load_receiver_lib( NULL, &receiver_interface);
+    load_demapper_lib(NULL, &demapper_interface);
+    load_receiver_lib(NULL, &receiver_interface);
+    init_channel_emulator_libs(fp);
 }
 
 void free_plugins()
@@ -26,8 +31,8 @@ void free_plugins()
     // insert your plugin release/free here.
 
     free_demapper_lib(&demapper_interface);
-
     free_receiver_lib(&receiver_interface);
+    free_channel_emulator_libs();
 }
 
 void worker_thread_plugin_init()
@@ -39,6 +44,9 @@ void worker_thread_plugin_init()
 
     if (receiver_interface.init_thread)
         receiver_interface.init_thread();
+
+    if (is_channel_emulation_enabled())
+        init_channel_emulator_worker_thread();
 }
 
 // END marker-plugins

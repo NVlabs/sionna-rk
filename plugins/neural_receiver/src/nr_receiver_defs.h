@@ -1,3 +1,7 @@
+/*
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
 
 #ifndef __NR_RECEIVER_DEFS_H__
 #define __NR_RECEIVER_DEFS_H__

@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 
 echo "This script requires elevated privileges. It will ask for password on the first call to sudo. This is required to install dependencies and the compiled kernel. Use --dry-run to see the operations instead."
 
-# supress outputs from pushd and popd
+# suppress outputs from pushd and popd
 function pushd() {
   command pushd "$@" > /dev/null
 }

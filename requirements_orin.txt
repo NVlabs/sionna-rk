@@ -1,5 +1,5 @@
 tensorflow==2.16.1+nv24.07
-sionna-no-rt
+sionna-no-rt < 2.0
 numpy
 matplotlib
 nanobind

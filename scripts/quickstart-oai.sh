@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 
@@ -14,7 +14,7 @@ function usage() {
     exit 1
 }
 
-# supress outputs from pushd and popd
+# suppress outputs from pushd and popd
 function pushd() {
   command pushd "$@" > /dev/null
 }

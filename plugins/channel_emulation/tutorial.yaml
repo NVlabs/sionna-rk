@@ -1,0 +1,22 @@
+#
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+
+name: channel_emulation
+description: CUDA channel emulator with file-based and ZMQ CIR sources
+
+tests:
+  unit:
+    enabled: true
+    command: |
+      pytest cuda_emulator/tests/unit -v
+      pytest file_loader/tests/unit -v
+      pytest zmq_loader/tests/unit -v
+  integration:
+    enabled: true
+    command: "tests/integration/run_integration.sh"
+
+build:
+  enabled: false
+  command: ""

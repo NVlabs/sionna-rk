@@ -1,3 +1,7 @@
+/*
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
 #include "data_processing.h"
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>

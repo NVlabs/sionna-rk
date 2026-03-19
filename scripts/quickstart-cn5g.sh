@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 
@@ -14,7 +14,7 @@ function usage() {
     exit 1
 }
 
-# supress outputs from pushd and popd
+# suppress outputs from pushd and popd
 function pushd() {
   command pushd "$@" > /dev/null
 }
@@ -67,7 +67,7 @@ if [ -z "$source_dir" ] || [ -z "$dest_dir" ]; then
     usage
 fi
 
-# tranform arch parameters
+# transform arch parameters
 case $arch in
     x86_64) arch="x86" ;;
     aarch64) arch="arm64" ;;

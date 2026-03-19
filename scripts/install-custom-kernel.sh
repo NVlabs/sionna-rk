@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 
@@ -11,7 +11,7 @@ function usage() {
     exit 1
 }
 
-# supress outputs from pushd and popd
+# suppress outputs from pushd and popd
 function pushd() {
   command pushd "$@" > /dev/null
 }
@@ -117,7 +117,7 @@ execute export KERNEL_HEADERS="$source_dir/Linux_for_Tegra/source/kernel/${SOURC
 
 # confirm that the kernel version in source matches the one specified.
 
-highest_kernel_compiled=eval "ls \"$source_dir/Linux_for_Tegra/rootfs/lib/modules/\" | sort -V | tail -n 1"
+highest_kernel_compiled=$( ls ${source_dir}/Linux_for_Tegra/rootfs/lib/modules/ | sort -V | tail -n 1 )
 
 if [ "$CI" == "0" ] && [ ! -d "$source_dir/Linux_for_Tegra/rootfs/lib/modules/$KERNEL_VERSION" ]; then
     echo "Kernel version in source ($highest_kernel_compiled) does not match the one specified ($KERNEL_VERSION). Exiting..."

@@ -10,23 +10,12 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
 option(ENABLE_CUDA "Enable CUDA package" ON)
 
 if (ENABLE_CUDA)
-  find_package(CUDA REQUIRED)
+  find_package(CUDAToolkit REQUIRED)
+  enable_language(CUDA)
   # Support multiple CUDA architectures: Orin (sm_87), Thor (sm_110), DGX Spark (sm_121)
-  # Can be overridden via -DCMAKE_CUDA_ARCHITECTURES=<arch> for specific platforms
+  # Can be overridden via -DCMAKE_CUDA_ARCHITECTURES=<arch>; plugins may set CUDA_ARCHITECTURES per target
   if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-    SET(CMAKE_CUDA_ARCHITECTURES "87;110;121")
-  endif()
-  
-  # Build NVCC flags based on architectures
-  # this is needed because -arch=native is not fully supported everywhere
-  SET(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS}")
-  foreach(arch IN LISTS CMAKE_CUDA_ARCHITECTURES)
-    SET(CUDA_NVCC_FLAGS "${CUDA_NVCC_FLAGS};-gencode=arch=compute_${arch},code=sm_${arch}")
-  endforeach()
-  
-  SET(CUDA_VERBOSE_BUILD ON)
-  if (NOT CUDA_FOUND)
-    message(FATAL_ERROR "no CUDA found")
+    set(CMAKE_CUDA_ARCHITECTURES "87;110;121")
   endif()
 endif()
 
@@ -40,6 +29,7 @@ if (ENABLE_CUDA)
   add_subdirectory(neural_demapper)
   add_subdirectory(neural_receiver)
   add_subdirectory(ldpc_cuda)
+  add_subdirectory(channel_emulation)
 endif ()
 add_subdirectory(data_acquisition)
 

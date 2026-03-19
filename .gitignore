@@ -2,6 +2,7 @@
 __pycache__/
 doc/build
 doc/public
+doc/_build
 profiler/reports
 dev/
 configs/**/.env
@@ -16,9 +17,11 @@ plugins/ldpc_cuda/build
 plugins/ldpc_cuda/test/*.so
 ext/
 env/
+**/.venv/
 .vscode/
 **/results/data/*
 !doc/source/plugins/link_adaptation/**/*.pdf
 plugins/ldpc_cuda/src/runtime/build/*
 *.plan
 *.log
+**/build/

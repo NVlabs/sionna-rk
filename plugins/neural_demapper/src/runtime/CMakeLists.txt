@@ -1,5 +1,5 @@
 #
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 cmake_minimum_required(VERSION 3.18)
@@ -24,6 +24,7 @@ execute_process(
   OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE nanobind_ROOT)
 find_package(nanobind CONFIG REQUIRED)
 
+find_package(CUDAToolkit REQUIRED)
 enable_language(CUDA)
 
 nanobind_add_module(data_processing data_processing.cu)
@@ -43,5 +44,5 @@ nanobind_add_module(trt_demapper trt_demapper.cpp data_processing.cu)
 target_compile_definitions(trt_demapper PRIVATE ENABLE_NANOBIND)
 target_compile_options(trt_demapper PRIVATE -Wno-deprecated-declarations)
 
-target_include_directories(trt_demapper PRIVATE ${TensorRT_INCLUDE_DIR} ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
-target_link_libraries(trt_demapper PRIVATE ${TensorRT_LIBRARY})
+target_include_directories(trt_demapper PRIVATE ${TensorRT_INCLUDE_DIR} ${CUDAToolkit_INCLUDE_DIRS})
+target_link_libraries(trt_demapper PRIVATE ${TensorRT_LIBRARY} CUDA::cudart)

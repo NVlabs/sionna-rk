@@ -1,9 +1,13 @@
 diff --git docker-compose.override.yaml docker-compose.override.yaml
 new file mode 100644
-index 0000000..b089a75
+index 0000000..5b1ed24
 --- /dev/null
 +++ docker-compose.override.yaml
-@@ -0,0 +1,17 @@
+@@ -0,0 +1,21 @@
++#
++# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++# SPDX-License-Identifier: Apache-2.0
++#
 +# this is a template. remove the .template extension to use
 +# contents of this file will be merged automatically with docker-compose.yaml
 +# uncomment the relevant lines
@@ -22,10 +26,14 @@ index 0000000..b089a75
 +    #cap_add:
 +    # - SYS_ADMIN
 diff --git docker-compose.yaml docker-compose.yaml
-index d531b15..5418e9e 100644
+index d531b15..a766cc0 100644
 --- docker-compose.yaml
 +++ docker-compose.yaml
-@@ -1,11 +1,10 @@
+@@ -1,11 +1,14 @@
++#
++# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++# SPDX-License-Identifier: Apache-2.0
++#
  services:
      mysql:
 -        container_name: "rfsim5g-mysql"
@@ -40,7 +48,7 @@ index d531b15..5418e9e 100644
          environment:
              - TZ=Europe/Paris
              - MYSQL_DATABASE=oai_db
-@@ -14,8 +13,6 @@ services:
+@@ -14,8 +17,6 @@ services:
              - MYSQL_ROOT_PASSWORD=linux
          healthcheck:
              test: /bin/bash -c "/tmp/mysql-healthcheck.sh"
@@ -49,7 +57,7 @@ index d531b15..5418e9e 100644
              interval: 10s
              timeout: 5s
              retries: 30
-@@ -23,44 +20,49 @@ services:
+@@ -23,44 +24,49 @@ services:
              public_net:
                  ipv4_address: 192.168.71.131
      oai-amf:
@@ -58,7 +66,8 @@ index d531b15..5418e9e 100644
 +        container_name: "oai-amf"
 +        image: oaisoftwarealliance/oai-amf:${AMF_TAG:-v2.1.10}
          environment:
-             - TZ=Europe/paris
+-            - TZ=Europe/paris
++            - TZ=Europe/Paris
 +            - OPERATOR_KEY=63bfa50ee6523365ff14c1f45f88737d
          volumes:
 -            - ./mini_nonrf_config.yaml:/openair-amf/etc/config.yaml
@@ -111,7 +120,7 @@ index d531b15..5418e9e 100644
          privileged: true
          networks:
              public_net:
-@@ -71,12 +73,13 @@ services:
+@@ -71,12 +77,13 @@ services:
                  interface_name: eth1
      oai-ext-dn:
          privileged: true
@@ -130,7 +139,7 @@ index d531b15..5418e9e 100644
          depends_on:
              - oai-upf
          networks:
-@@ -84,320 +87,110 @@ services:
+@@ -84,320 +91,114 @@ services:
                  ipv4_address: 192.168.72.135
          healthcheck:
              test: /bin/bash -c "ping -c 2 192.168.72.134"
@@ -146,6 +155,7 @@ index d531b15..5418e9e 100644
 -            - SYS_NICE
 +        image: ${GNB_IMAGE:-oai-gnb-cuda}:${GNB_TAG:-latest}
 +        container_name: oai-gnb
++        user: ${USER_ID:-0}:${GROUP_ID:-0}
 +        runtime: nvidia
          cap_drop:
              - ALL
@@ -171,8 +181,11 @@ index d531b15..5418e9e 100644
 +            - /dev/bus/usb/:/dev/bus/usb/
          volumes:
 -            - ../../conf_files/gnb.sa.band78.106prb.rfsim.yaml:/opt/oai-gnb/etc/gnb.yaml
++            - /tmp/nvidia-mps:/tmp/nvidia-mps
++            - /tmp/nvidia-log:/tmp/nvidia-log
 +            - ${GNB_CONFIG:-../common/gnb.sa.usrpb200.24prbs.conf}:/opt/oai-gnb/etc/gnb.conf
 +            - ../../plugins:/opt/oai-gnb/plugins # mount all plugins for weights, logs, data capture, etc.
++        ipc: host
          healthcheck:
 -            test: /bin/bash -c "pgrep nr-softmodem"
 -            start_period: 10s
@@ -260,15 +273,18 @@ index d531b15..5418e9e 100644
 -                ipv4_address: 192.168.71.152
 -        devices:
 -             - /dev/net/tun:/dev/net/tun
--        volumes:
++            - /dev/net/tun:/dev/net/tun
++            - /dev/bus/usb/:/dev/bus/usb/
+         volumes:
 -            - ../../conf_files/nrue.uicc.conf:/opt/oai-nr-ue/etc/nr-ue.conf
--        healthcheck:
--            test: /bin/bash -c "pgrep nr-uesoftmodem"
++            - ${UE_CONFIG:-../common/nrue.uicc.conf}:/opt/oai-nr-ue/etc/nr-ue.conf
+         healthcheck:
+             test: /bin/bash -c "pgrep nr-uesoftmodem"
 -            start_period: 10s
 -            start_interval: 500ms
--            interval: 10s
--            timeout: 5s
--            retries: 5
+             interval: 10s
+             timeout: 5s
+             retries: 5
 -    oai-nr-ue4:
 -        image: ${REGISTRY:-oaisoftwarealliance}/${NRUE_IMG:-oai-nr-ue}:${TAG:-develop}
 -        container_name: rfsim5g-oai-nr-ue4
@@ -282,12 +298,18 @@ index d531b15..5418e9e 100644
 -            USE_ADDITIONAL_OPTIONS: -E --rfsim -r 106 --numerology 1 --uicc0.imsi 208990100001103 -C 3319680000 --rfsimulator.serveraddr 192.168.71.140 --log_config.global_log_options level,nocolor,time
 -        depends_on:
 -            - oai-gnb
--        networks:
++    nearRT-RIC:
++        image: oai-flexric:${FLEXRIC_TAG:-latest}
++        command: "stdbuf -o0 nearRT-RIC"
++        container_name: nearRT-RIC
+         networks:
 -            public_net:
 -                ipv4_address: 192.168.71.153
 -        devices:
 -             - /dev/net/tun:/dev/net/tun
--        volumes:
++            e2_net:
++                ipv4_address: 192.168.73.154
+         volumes:
 -            - ../../conf_files/nrue.uicc.conf:/opt/oai-nr-ue/etc/nr-ue.conf
 -        healthcheck:
 -            test: /bin/bash -c "pgrep nr-uesoftmodem"
@@ -314,7 +336,16 @@ index d531b15..5418e9e 100644
 -                ipv4_address: 192.168.71.154
 -        devices:
 -             - /dev/net/tun:/dev/net/tun
--        volumes:
++            - ../common/flexric.conf:/usr/local/etc/flexric/flexric.conf
++    monitor_xapp:
++        image: oai-flexric:${FLEXRIC_TAG:-latest}
++        container_name: monitor_xapp
++        networks:
++            e2_net:
++                ipv4_address: 192.168.73.155
++        ports:
++            - "5555:5555"
+         volumes:
 -            - ../../conf_files/nrue.uicc.conf:/opt/oai-nr-ue/etc/nr-ue.conf
 -        healthcheck:
 -            test: /bin/bash -c "pgrep nr-uesoftmodem"
@@ -341,18 +372,15 @@ index d531b15..5418e9e 100644
 -                ipv4_address: 192.168.71.155
 -        devices:
 -             - /dev/net/tun:/dev/net/tun
-+            - /dev/net/tun:/dev/net/tun
-+            - /dev/bus/usb/:/dev/bus/usb/
-         volumes:
+-        volumes:
 -            - ../../conf_files/nrue.uicc.conf:/opt/oai-nr-ue/etc/nr-ue.conf
-+            - ${UE_CONFIG:-../common/nrue.uicc.conf}:/opt/oai-nr-ue/etc/nr-ue.conf
-         healthcheck:
-             test: /bin/bash -c "pgrep nr-uesoftmodem"
+-        healthcheck:
+-            test: /bin/bash -c "pgrep nr-uesoftmodem"
 -            start_period: 10s
 -            start_interval: 500ms
-             interval: 10s
-             timeout: 5s
-             retries: 5
+-            interval: 10s
+-            timeout: 5s
+-            retries: 5
 -    oai-nr-ue7:
 -        image: ${REGISTRY:-oaisoftwarealliance}/${NRUE_IMG:-oai-nr-ue}:${TAG:-develop}
 -        container_name: rfsim5g-oai-nr-ue7
@@ -366,18 +394,12 @@ index d531b15..5418e9e 100644
 -            USE_ADDITIONAL_OPTIONS: -E --rfsim -r 106 --numerology 1 --uicc0.imsi 208990100001106 -C 3319680000 --rfsimulator.serveraddr 192.168.71.140 --log_config.global_log_options level,nocolor,time
 -        depends_on:
 -            - oai-gnb
-+    nearRT-RIC:
-+        image: oai-flexric:${FLEXRIC_TAG:-latest}
-+        command: "stdbuf -o0 nearRT-RIC"
-+        container_name: nearRT-RIC
-         networks:
+-        networks:
 -            public_net:
 -                ipv4_address: 192.168.71.156
 -        devices:
 -             - /dev/net/tun:/dev/net/tun
-+            e2_net:
-+                ipv4_address: 192.168.73.154
-         volumes:
+-        volumes:
 -            - ../../conf_files/nrue.uicc.conf:/opt/oai-nr-ue/etc/nr-ue.conf
 -        healthcheck:
 -            test: /bin/bash -c "pgrep nr-uesoftmodem"
@@ -404,16 +426,7 @@ index d531b15..5418e9e 100644
 -                ipv4_address: 192.168.71.157
 -        devices:
 -             - /dev/net/tun:/dev/net/tun
-+            - ../common/flexric.conf:/usr/local/etc/flexric/flexric.conf
-+    monitor_xapp:
-+        image: oai-flexric:${FLEXRIC_TAG:-latest}
-+        container_name: monitor_xapp
-+        networks:
-+            e2_net:
-+                ipv4_address: 192.168.73.155
-+        ports:
-+            - "5555:5555"
-         volumes:
+-        volumes:
 -            - ../../conf_files/nrue.uicc.conf:/opt/oai-nr-ue/etc/nr-ue.conf
 -        healthcheck:
 -            test: /bin/bash -c "pgrep nr-uesoftmodem"
@@ -521,7 +534,7 @@ index 481c4e6..070d35a 100644
  [XAPP]
  DB_DIR = /tmp/
 diff --git gnb.sa.band78.106prbs.conf gnb.sa.band78.106prbs.conf
-index 0057d9b..2ab1245 100644
+index 0057d9b..5714c09 100644
 --- gnb.sa.band78.106prbs.conf
 +++ gnb.sa.band78.106prbs.conf
 @@ -1,4 +1,4 @@
@@ -626,7 +639,7 @@ index 0057d9b..2ab1245 100644
            prach_msg1_FrequencyStart                                 = 0;
 -          zeroCorrelationZoneConfig                                 = 13;
 -          preambleReceivedTargetPower                               = -96;
-+          zeroCorrelationZoneConfig                                 = 12;
++          zeroCorrelationZoneConfig                                 = 15;
 +          preambleReceivedTargetPower                               = -104;
  #preamblTransMax (0...10) = (3,4,5,6,7,8,10,20,50,100,200)
            preambleTransMax                                          = 6;
@@ -814,7 +827,7 @@ index 0057d9b..2ab1245 100644
 +      );
 +    };
 diff --git gnb.sa.band78.24prbs.conf gnb.sa.band78.24prbs.conf
-index 0057d9b..aae3543 100644
+index 0057d9b..f522b66 100644
 --- gnb.sa.band78.24prbs.conf
 +++ gnb.sa.band78.24prbs.conf
 @@ -1,4 +1,5 @@
@@ -901,7 +914,15 @@ index 0057d9b..aae3543 100644
  # subcarrierSpacing
  # 0=kHz15, 1=kHz30, 2=kHz60, 3=kHz120
          initialULBWPsubcarrierSpacing                               = 1;
-@@ -78,14 +89,17 @@ gNBs =
+@@ -71,21 +82,24 @@ gNBs =
+ #0 = one, 1=two, 2=four, 3=eight
+           prach_msg1_FDM                                            = 0;
+           prach_msg1_FrequencyStart                                 = 0;
+-          zeroCorrelationZoneConfig                                 = 13;
++          zeroCorrelationZoneConfig                                 = 15;
+           preambleReceivedTargetPower                               = -96;
+ #preamblTransMax (0...10) = (3,4,5,6,7,8,10,20,50,100,200)
+           preambleTransMax                                          = 6;
  #powerRampingStep
  # 0=dB0,1=dB2,2=dB4,3=dB6
          powerRampingStep                                            = 1;
@@ -1061,7 +1082,7 @@ index 0057d9b..aae3543 100644
 +      );
 +    };
 diff --git gnb.sa.band78.51prbs.conf gnb.sa.band78.51prbs.conf
-index 0057d9b..f6a6c59 100644
+index 0057d9b..e7616b8 100644
 --- gnb.sa.band78.51prbs.conf
 +++ gnb.sa.band78.51prbs.conf
 @@ -1,4 +1,4 @@
@@ -1108,7 +1129,15 @@ index 0057d9b..f6a6c59 100644
        #scs-SpecificCarrierList
          dl_offstToCarrier                                              = 0;
  # subcarrierSpacing
-@@ -78,10 +81,13 @@ gNBs =
+@@ -71,17 +74,20 @@ gNBs =
+ #0 = one, 1=two, 2=four, 3=eight
+           prach_msg1_FDM                                            = 0;
+           prach_msg1_FrequencyStart                                 = 0;
+-          zeroCorrelationZoneConfig                                 = 13;
++          zeroCorrelationZoneConfig                                 = 15;
+           preambleReceivedTargetPower                               = -96;
+ #preamblTransMax (0...10) = (3,4,5,6,7,8,10,20,50,100,200)
+           preambleTransMax                                          = 6;
  #powerRampingStep
  # 0=dB0,1=dB2,2=dB4,3=dB6
          powerRampingStep                                            = 1;

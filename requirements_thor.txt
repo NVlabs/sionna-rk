@@ -1,4 +1,4 @@
-sionna-no-rt
+sionna-no-rt < 2.0
 numpy
 matplotlib
 nanobind

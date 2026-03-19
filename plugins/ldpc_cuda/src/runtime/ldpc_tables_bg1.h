@@ -1,3 +1,7 @@
+/*
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+*/
 #define BG1_CN_DEGREE_TABLE(op) op(bg1_cn_degree_0), op(bg1_cn_degree_1), op(bg1_cn_degree_2), op(bg1_cn_degree_3), op(bg1_cn_degree_4), op(bg1_cn_degree_5), op(bg1_cn_degree_6), op(bg1_cn_degree_7)
 #define BG1_VN_DEGREE_TABLE(op) op(bg1_vn_degree_0), op(bg1_vn_degree_1), op(bg1_vn_degree_2), op(bg1_vn_degree_3), op(bg1_vn_degree_4), op(bg1_vn_degree_5), op(bg1_vn_degree_6), op(bg1_vn_degree_7)
 #define BG1_CN_TABLE(op) op(bg1_cn_0), op(bg1_cn_1), op(bg1_cn_2), op(bg1_cn_3), op(bg1_cn_4), op(bg1_cn_5), op(bg1_cn_6), op(bg1_cn_7)

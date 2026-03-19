@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 
@@ -94,7 +94,6 @@ echo "UPF"
 docker build ${debug_opts} --target oai-upf --tag oai-upf:${tag} --file component/oai-upf/docker/Dockerfile.upf.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-upf
 echo "LMF"
 docker build ${debug_opts} --target oai-lmf --tag oai-lmf:${tag} --file component/oai-lmf/docker/Dockerfile.lmf.ubuntu --build-arg BASE_IMAGE=ubuntu:22.04 component/oai-lmf
-e
 echo "Traffic Generator"
 cd ci-scripts
 docker build ${debug_opts} --target trf-gen-cn5g --tag trf-gen-cn5g:latest --file Dockerfile.traffic.generator.ubuntu .

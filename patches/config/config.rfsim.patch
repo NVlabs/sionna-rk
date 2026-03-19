@@ -1,9 +1,9 @@
 diff --git .env .env
 new file mode 100644
-index 0000000..4cbffeb
+index 0000000..475f3f5
 --- /dev/null
 +++ .env
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,80 @@
 +# =============================================================================
 +# Config Files
 +# =============================================================================
@@ -12,6 +12,8 @@ index 0000000..4cbffeb
 +# Changing the number of PRBs requires to also update accordingly the UE_EXTRA_OPTIONS parameter below
 +GNB_CONFIG="../common/gnb.sa.band78.106prbs.conf"
 +
++CUDA_MPS_PIPE_DIRECTORY=/tmp/nvidia-mps
++CUDA_MPS_LOG_DIRECTORY=/tmp/nvidia-log
 +
 +# =============================================================================
 +# Image Tags
@@ -49,6 +51,15 @@ index 0000000..4cbffeb
 +# Neural Receiver
 +# works best with 24 PRBs
 +#GNB_EXTRA_OPTIONS="--loader.receiver.shlibversion _trt --MACRLCs.[0].ul_max_mcs 10"
++
++# Channel Emulation (choose one CIR source: cir_file or cir_zmq)
++# Option 1: File-based CIR (loads pre-computed CIR data from folder)
++#GNB_EXTRA_OPTIONS="--cir-folder /opt/oai-gnb/plugins/channel_emulation/data/pass_through_cir"
++# Option 2: ZMQ-based CIR (receives CIR data via ZMQ at runtime, use with Sionna RT GUI)
++#GNB_EXTRA_OPTIONS="--cir-zmq-num-taps 48"
++
++# MPS active thread percentage (only relevant when running the Sionna RT GUI)
++#MPS_ACTIVE_THREAD_PCT=30.0
 +
 +# =============================================================================
 +# UE Extra Options (soft-UE only)

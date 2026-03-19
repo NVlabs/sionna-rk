@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 
@@ -80,6 +80,9 @@ if grep -q "alias trtexec=/usr/src/tensorrt/bin/trtexec" ~/.bash_aliases; then
 else
   echo 'alias trtexec=/usr/src/tensorrt/bin/trtexec' >> ~/.bash_aliases
 fi
+
+# install ZMQ required for channel emulator
+sudo apt install libzmq5 libczmq-dev libcjson1 libcjson-dev
 
 # install python requirements for tutorials
 base_dir=$(realpath $(dirname "${BASH_SOURCE[0]}")/../)

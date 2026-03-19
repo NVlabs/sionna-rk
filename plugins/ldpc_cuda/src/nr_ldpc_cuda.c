@@ -1,5 +1,5 @@
 /*
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 */
 #define _GNU_SOURCE
@@ -57,7 +57,7 @@ int32_t LDPCinit( void )
 {
     context = ldpc_decoder_init(1);
     if (context) {
-        printf("Initialized LDPC decoder\n");
+        printf("Initialized CUDA LDPC decoder\n");
         fflush(stdout);
         return 0;
     }
@@ -68,7 +68,7 @@ int32_t LDPCinit( void )
 int32_t LDPCthreadinit( void ) {
     if (!context) { // only run initialization for new threads
         context = ldpc_decoder_init(1);
-        printf("Initialized new LDPC decoder context\n");
+        printf("Initialized new CUDA LDPC decoder context\n");
         fflush(stdout);
     }
     if (!context)
@@ -78,7 +78,7 @@ int32_t LDPCthreadinit( void ) {
 
 int32_t LDPCshutdown( void )
 {
-    printf("Shutting down LDPC decoder\n");
+    printf("Shutting down CUDA LDPC decoder\n");
     fflush(stdout);
     ldpc_decoder_shutdown();
     return 0;

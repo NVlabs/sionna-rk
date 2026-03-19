@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 
@@ -128,10 +128,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --ci)
             ci="1"
-            shift
-            ;;
-        -d|--debug)
-            debug_opts="--progress plain"
             shift
             ;;
         *)

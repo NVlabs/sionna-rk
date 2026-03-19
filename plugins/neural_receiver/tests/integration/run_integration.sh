@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Integration test for Neural Receiver (TensorRT)
@@ -11,6 +11,53 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 CONFIG_NAME="${CONFIG_NAME:-testing}"
+
+# Detect platform for GPU monitoring method
+SRK_PLATFORM="${SRK_PLATFORM:-$("$REPO_ROOT/scripts/detect_host.sh" 2>/dev/null || echo "Unknown")}"
+
+is_jetson_platform() {
+    case "$SRK_PLATFORM" in
+        "AGX Orin"|"Orin Nano Super"|"AGX Thor") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+check_gpu_jetson() {
+    local softmodem_running=false
+    if docker exec oai-gnb pgrep -f softmodem >/dev/null 2>&1; then
+        softmodem_running=true
+    fi
+    if [ "$softmodem_running" = false ]; then
+        return 1
+    fi
+
+    # Check GPU utilization via tegrastats
+    if command -v tegrastats >/dev/null 2>&1; then
+        local tegra_out gpu_load
+        tegra_out=$(timeout 2 tegrastats --interval 500 2>/dev/null | head -1)
+        gpu_load=$(echo "$tegra_out" | grep -oP 'GR3D_FREQ \K\d+' || echo "0")
+        if [ "$gpu_load" -gt 0 ]; then
+            echo "✅ Found softmodem using GPU (Jetson tegrastats: GR3D_FREQ ${gpu_load}%)"
+            return 0
+        fi
+    fi
+
+    # Fallback: jtop Python API for process-level GPU detection
+    if python3 -c "
+from jtop import jtop
+import sys
+with jtop() as j:
+    for proc in j.processes:
+        if 'softmodem' in str(proc[-1]):
+            sys.exit(0)
+sys.exit(1)
+" 2>/dev/null; then
+        echo "✅ Found softmodem using GPU (Jetson jtop)"
+        return 0
+    fi
+
+    return 1
+}
 
 # Config paths
 CONFIGS_DIR="$REPO_ROOT/config"
@@ -96,24 +143,29 @@ docker exec oai-nr-ue iperf3 -u -t $IPERF_DURATION -i 1 -b 5M -B 12.1.1.2 -c 192
 IPERF_PID=$!
 
 # Check GPU load while iperf is running
-echo "Checking GPU usage..."
-GPU_DETECTED=false
+echo "Checking GPU usage (platform: $SRK_PLATFORM)..."
 SOFTMODEM_DETECTED=false
 
-# Check for a few seconds
 for i in {1..5}; do
-    if docker exec oai-gnb nvidia-smi >/dev/null 2>&1; then
-        SMI_OUT=$(docker exec oai-gnb nvidia-smi --query-compute-apps=process_name --format=csv,noheader)
-        if echo "$SMI_OUT" | grep -q "softmodem"; then
+    if is_jetson_platform; then
+        if check_gpu_jetson; then
             SOFTMODEM_DETECTED=true
-            echo "✅ Found softmodem using GPU"
             break
         fi
     else
-        if nvidia-smi --query-compute-apps=process_name --format=csv,noheader | grep -q "softmodem"; then
-            SOFTMODEM_DETECTED=true
-            echo "✅ Found softmodem using GPU (on host)"
-            break
+        if docker exec oai-gnb nvidia-smi >/dev/null 2>&1; then
+            SMI_OUT=$(docker exec oai-gnb nvidia-smi --query-compute-apps=process_name --format=csv,noheader)
+            if echo "$SMI_OUT" | grep -q "softmodem"; then
+                SOFTMODEM_DETECTED=true
+                echo "✅ Found softmodem using GPU"
+                break
+            fi
+        else
+            if nvidia-smi --query-compute-apps=process_name --format=csv,noheader | grep -q "softmodem"; then
+                SOFTMODEM_DETECTED=true
+                echo "✅ Found softmodem using GPU (on host)"
+                break
+            fi
         fi
     fi
     sleep 1
@@ -138,7 +190,12 @@ if [ "$SOFTMODEM_DETECTED" = "true" ]; then
     echo "✅ GPU load from softmodem verified"
 else
     echo "❌ No GPU load detected from softmodem"
-    nvidia-smi
+    if is_jetson_platform; then
+        echo "--- Jetson GPU diagnostics ---"
+        tegrastats --interval 500 2>/dev/null | head -1 || true
+    else
+        nvidia-smi
+    fi
     exit 1
 fi
 

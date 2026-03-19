@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 """
@@ -44,7 +44,7 @@ class FlexRICStatsPublisher:
 
         Args:
             port: Port to bind the ZeroMQ publisher to
-            interval: Interval in seconds to publish data (default: 0.5s)
+            interval: Interval in seconds to publish data (default: 0.05s)
             rnti_imsi_map_file: Path to JSON file with RNTI to IMSI/UE number mapping
         """
         self.port = port
@@ -407,8 +407,8 @@ Examples:
     )
     parser.add_argument('--port', type=int, default=5555,
                        help='Port to bind ZeroMQ publisher to (default: 5555)')
-    parser.add_argument('--interval', type=float, default=0.5,
-                       help='Publish interval in seconds (default: 0.5)')
+    parser.add_argument('--interval', type=float, default=0.05,
+                       help='Publish interval in seconds (default: 0.05)')
 
     args = parser.parse_args()
 

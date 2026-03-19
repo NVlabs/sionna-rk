@@ -1,12 +1,12 @@
 #!/bin/bash
 #
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 
 set -e  # Stop script on any error
 
-# supress outputs from pushd and popd
+# suppress outputs from pushd and popd
 function pushd() {
   command pushd "$@" > /dev/null
 }
@@ -77,7 +77,7 @@ wait_for_container "oai-ext-dn"
 echo "All services are up and healthy!"
 
 echo "Starting gNB"
-docker compose --env-file "$env_file" up -d oai-gnb
+USER_ID="$(id -u)" GROUP_ID="$(id -g)" docker compose --env-file "$env_file" up -d oai-gnb
 
 wait_for_container "oai-gnb"
 
