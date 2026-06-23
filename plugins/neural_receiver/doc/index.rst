@@ -43,7 +43,7 @@ To enable the neural receiver in the gNB, configure the shared library loader to
 
 .. code-block:: bash
 
-    GNB_EXTRA_OPTIONS="--loader.receiver.shlibversion _neural_rx" - --MACRLCs.[0].dl_max_mcs 10 --MACRLCs.[0].ul_max_mcs 10
+    GNB_EXTRA_OPTIONS="--loader.receiver.shlibversion _neural_rx --MACRLCs.[0].dl_max_mcs 10 --MACRLCs.[0].ul_max_mcs 10"
 
 As our receiver implementation is limited to 16-QAM, we limit the uplink MCS such that only 16-QAM is used. An extension to other modulations is possible but requires careful interfacing with the OAI stack.
 
