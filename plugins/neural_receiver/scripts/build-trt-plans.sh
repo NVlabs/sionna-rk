@@ -48,9 +48,9 @@ echo "Using plan file: $plan_file"
 echo "Using ONNX file: $onnx_file"
 
 # 24 PRBs
-/usr/src/tensorrt/bin/trtexec --fp16 --onnx=${onnx_file} --saveEngine=${plan_file} --minShapes=rx_slot:1x288x13x1x2,h_hat:1x432x1x1x2 --optShapes=rx_slot:1x288x13x1x2,h_hat:1x432x1x1x2 --maxShapes=rx_slot:1x288x13x1x2,h_hat:1x432x1x1x2 --inputIOFormats=fp16:chw,fp16:chw,fp16:chw,int32:chw,int32:chw --outputIOFormats=fp16:chw
+/usr/src/tensorrt/bin/trtexec --onnx=${onnx_file} --saveEngine=${plan_file} --minShapes=rx_slot:1x288x13x1x2,h_hat:1x432x1x1x2 --optShapes=rx_slot:1x288x13x1x2,h_hat:1x432x1x1x2 --maxShapes=rx_slot:1x288x13x1x2,h_hat:1x432x1x1x2
 
 # 51 PRBs
 # requires re-export of ONNX model via /ext/neural_rx/scripts/export_onnx.py and modify the number of PRBs in the config file n_size_bwp_eval=51
 # Note that MAX_BLOCK_LEN is currently hardcoded in the receiver plugin.
-#/usr/src/tensorrt/bin/trtexec --fp16 --onnx=${onnx_file} --saveEngine=${plan_file} --minShapes=rx_slot:1x612x13x1x2,h_hat:1x918x1x1x2 --optShapes=rx_slot:1x612x13x1x2,h_hat:1x918x1x1x2 --maxShapes=rx_slot:1x612x13x1x2,h_hat:1x918x1x1x2 --inputIOFormats=fp16:chw,fp16:chw,fp16:chw,int32:chw,int32:chw --outputIOFormats=fp16:chw
+#/usr/src/tensorrt/bin/trtexec --onnx=${onnx_file} --saveEngine=${plan_file} --minShapes=rx_slot:1x612x13x1x2,h_hat:1x918x1x1x2 --optShapes=rx_slot:1x612x13x1x2,h_hat:1x918x1x1x2 --maxShapes=rx_slot:1x612x13x1x2,h_hat:1x918x1x1x2

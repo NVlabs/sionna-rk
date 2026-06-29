@@ -47,4 +47,4 @@ onnx_file=$(realpath -sm "$onnx_file")
 echo "Using plan file: $plan_file"
 echo "Using ONNX file: $onnx_file"
 
-/usr/src/tensorrt/bin/trtexec --fp16 --onnx="${onnx_file}" --saveEngine="${plan_file}" --preview=+profileSharing0806 --inputIOFormats=fp16:chw --outputIOFormats=fp16:chw --minShapes=y:1x2 --optShapes=y:64x2 --maxShapes=y:512x2
+/usr/src/tensorrt/bin/trtexec --onnx="${onnx_file}" --saveEngine="${plan_file}" --minShapes=y:1x2 --optShapes=y:64x2 --maxShapes=y:512x2
