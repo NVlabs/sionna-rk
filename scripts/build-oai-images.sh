@@ -21,7 +21,7 @@ function log_separator() {
 function log_check_status() {
     echo "Running: $@" | tee -a ${project_root}/build.log
     eval "$@" 2>&1 | tee -a ${project_root}/build.log
-    ret_val=$?
+    ret_val=${PIPESTATUS[0]}
     if [ $ret_val -ne 0 ]; then
         echo "Command failed with exit code $ret_val"
         exit $ret_val

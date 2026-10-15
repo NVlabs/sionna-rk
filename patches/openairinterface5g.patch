@@ -10,18 +10,6 @@ index d1c6979e76..846a6b66ce 100644
 +
 +# Generated files
 +host_product_family
-diff --git a/.gitmodules b/.gitmodules
-index 583c8d8758..b59dcaffa5 100644
---- a/.gitmodules
-+++ b/.gitmodules
-@@ -1,4 +1,5 @@
- [submodule "openair2/E2AP/flexric"]
- 	path = openair2/E2AP/flexric
--	url = ../flexric.git
--	branch = remotes/origin/2025_w34.internal
-+	url = https://gitlab.eurecom.fr/mosaic5g/flexric.git
-+	branch = remotes/origin/service-models-integration
-+
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index a71b1c3ea2..e721041ce5 100644
 --- a/CMakeLists.txt
@@ -164,10 +152,10 @@ index 0000000000..92e06a28e2
 +cat /sys/devices/virtual/dmi/id/*family > host_product_family
 diff --git a/docker/Dockerfile.base.ubuntu.cuda b/docker/Dockerfile.base.ubuntu.cuda
 new file mode 100644
-index 0000000000..5e25e8d826
+index 0000000000..fdd5807e0d
 --- /dev/null
 +++ b/docker/Dockerfile.base.ubuntu.cuda
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,101 @@
 +#/*
 +# * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
 +# * contributor license agreements.  See the NOTICE file distributed with
@@ -195,7 +183,7 @@ index 0000000000..5e25e8d826
 +#
 +#---------------------------------------------------------------------
 +
-+ARG BASE_IMAGE=nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04
++ARG BASE_IMAGE=nvcr.io/nvidia/cuda:13.4.2-cudnn-devel-ubuntu24.04
 +
 +FROM $BASE_IMAGE AS ran-base-cuda
 +ARG NEEDED_GIT_PROXY
@@ -236,6 +224,11 @@ index 0000000000..5e25e8d826
 +       wget ${EXTRA_DEB_PKGS} && \
 +    pip3 install --ignore-installed pyyaml
 +
++COPY host_product_family /oai-ran/host_product_family
++
++COPY docker/scripts/install-modelopt-dependencies.sh /usr/local/bin/
++RUN /bin/bash /usr/local/bin/install-modelopt-dependencies.sh
++
 +# Add "Tini - A tiny but valid init for containers", https://github.com/krallin/tini
 +# it will be copied into target containers, to print exit numbers and handle signals properly
 +ENV TINI_VERSION=v0.19.0
@@ -253,14 +246,11 @@ index 0000000000..5e25e8d826
 +WORKDIR /oai-ran/cmake_targets
 +COPY cmake_targets/build_oai .
 +
-+# note: output of running, detect_host.sh run first if missing
-+COPY host_product_family /oai-ran/host_product_family
-+
 +WORKDIR /oai-ran
 +COPY oaienv .
 +
 +#run build_oai -I to get the builder image
-+RUN /bin/sh oaienv && \ 
++RUN /bin/sh oaienv && \
 +    cd cmake_targets && \
 +    mkdir -p log && \
 +    ./build_oai -I -w USRP --install-optional-packages
@@ -351,10 +341,10 @@ index 0000000000..2218a33242
 +    ninja install
 diff --git a/docker/Dockerfile.flexric.ubuntu b/docker/Dockerfile.flexric.ubuntu
 new file mode 100644
-index 0000000000..bab504ef7c
+index 0000000000..5c69d50018
 --- /dev/null
 +++ b/docker/Dockerfile.flexric.ubuntu
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,189 @@
 +#
 +# Fixed FlexRIC Dockerfile - builds from source with stability improvements
 +#
@@ -364,7 +354,7 @@ index 0000000000..bab504ef7c
 +ENV DEBIAN_FRONTEND=noninteractive
 +ENV TZ=Europe/Paris
 +# --break-system-packages allows externally managed environment in pip in newer versions of pip
-+ENV PIP_BREAK_SYSTEM_PACKAGES=1 
++ENV PIP_BREAK_SYSTEM_PACKAGES=1
 +
 +# Install dependencies
 +RUN apt-get update && \
@@ -470,7 +460,7 @@ index 0000000000..bab504ef7c
 +ENV DEBIAN_FRONTEND=noninteractive
 +ENV TZ=Europe/Paris
 +# --break-system-packages allows externally managed environment in pip in newer versions of pip
-+ENV PIP_BREAK_SYSTEM_PACKAGES=1 
++ENV PIP_BREAK_SYSTEM_PACKAGES=1
 +
 +# Install runtime packages + debugging tools
 +RUN apt-get update && \
@@ -544,10 +534,9 @@ index 0000000000..bab504ef7c
 +
 +# Use unbuffered output and add ulimit for core dumps
 +CMD ["sh", "-c", "ulimit -c unlimited && stdbuf -o0 nearRT-RIC"]
-+
 diff --git a/docker/Dockerfile.gNB.ubuntu.cuda b/docker/Dockerfile.gNB.ubuntu.cuda
 new file mode 100644
-index 0000000000..a74dcc121c
+index 0000000000..a34b21152a
 --- /dev/null
 +++ b/docker/Dockerfile.gNB.ubuntu.cuda
 @@ -0,0 +1,165 @@
@@ -578,7 +567,7 @@ index 0000000000..a74dcc121c
 +#
 +#---------------------------------------------------------------------
 +
-+ARG BASE_IMAGE=nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04
++ARG BASE_IMAGE=nvcr.io/nvidia/cuda:13.4.2-cudnn-devel-ubuntu24.04
 +ARG DOCKER_CUSTOM_IMAGE_TAG=latest
 +ARG DOCKER_CUSTOM_BASE_IMAGE_TAG=${DOCKER_CUSTOM_IMAGE_TAG}
 +ARG NVIDIA_DRIVER_CAPABILITIES=all
@@ -718,7 +707,7 @@ index 0000000000..a74dcc121c
 +CMD ["/opt/oai-gnb/bin/nr-softmodem"]
 diff --git a/docker/Dockerfile.nrUE.ubuntu.cuda b/docker/Dockerfile.nrUE.ubuntu.cuda
 new file mode 100644
-index 0000000000..44cb76bd38
+index 0000000000..a740003491
 --- /dev/null
 +++ b/docker/Dockerfile.nrUE.ubuntu.cuda
 @@ -0,0 +1,142 @@
@@ -749,7 +738,7 @@ index 0000000000..44cb76bd38
 +#
 +#---------------------------------------------------------------------
 +
-+ARG BASE_IMAGE=nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04
++ARG BASE_IMAGE=nvcr.io/nvidia/cuda:13.4.2-cudnn-devel-ubuntu24.04
 +ARG DOCKER_CUSTOM_IMAGE_TAG=latest
 +ARG NVIDIA_DRIVER_CAPABILITIES=all
 +
@@ -864,6 +853,45 @@ index 0000000000..44cb76bd38
 +COPY --from=nr-ue-base /tini /tini
 +CMD ["/opt/oai-nr-ue/bin/nr-uesoftmodem"]
 +ENTRYPOINT ["/tini", "-v", "--", "/opt/oai-nr-ue/bin/entrypoint.sh"]
+diff --git a/docker/scripts/install-modelopt-dependencies.sh b/docker/scripts/install-modelopt-dependencies.sh
+new file mode 100644
+index 0000000000..d9cee6165d
+--- /dev/null
++++ b/docker/scripts/install-modelopt-dependencies.sh
+@@ -0,0 +1,33 @@
++#!/bin/bash
++
++set -euo pipefail
++
++host_product_family_file=/oai-ran/host_product_family
++host_product_family=Unknown
++
++if [[ -f "${host_product_family_file}" ]]; then
++  host_product_family=$(tr -d '\r\n' < "${host_product_family_file}")
++fi
++
++if ! cuda_release=$(nvcc --version | awk '/release/ {gsub(",", "", $5); print $5; exit}') ||
++   [[ -z "${cuda_release}" ]]; then
++  echo "ERROR: Unable to determine CUDA version with nvcc." >&2
++  exit 1
++fi
++
++cuda_major=${cuda_release%%.*}
++if [[ "${host_product_family}" != "DGX Spark" || "${cuda_major}" != "13" ]]; then
++  echo "Skipping NVIDIA ModelOpt installation (platform: ${host_product_family}, CUDA: ${cuda_release})."
++  exit 0
++fi
++
++echo "Installing NVIDIA ModelOpt for DGX Spark with CUDA ${cuda_release}."
++
++# ModelOpt requires torch>=2.8. Install an explicit CUDA 13.0 build.
++python3 -m pip install --break-system-packages --ignore-installed --upgrade pip setuptools wheel
++python3 -m pip install --break-system-packages "torch==2.13.0" --index-url https://download.pytorch.org/whl/cu130
++
++python3 -m pip install --break-system-packages 'nvidia-modelopt[onnx]'
++python3 -m pip uninstall --break-system-packages --yes cupy-cuda12x onnxruntime-gpu
++python3 -m pip install --break-system-packages cupy-cuda13x
++python3 -m pip install --break-system-packages --no-deps 'onnxruntime-gpu>=1.27,<2'
 diff --git a/executables/nr-gnb.c b/executables/nr-gnb.c
 index 24870544b8..0eac7b14d6 100644
 --- a/executables/nr-gnb.c
@@ -1246,10 +1274,10 @@ index 5b7508fc29..2f2934d419 100644
  
 diff --git a/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface.c b/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface.c
 new file mode 100644
-index 0000000000..0dcb3fe40d
+index 0000000000..795e41c910
 --- /dev/null
 +++ b/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface.c
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,54 @@
 +/*
 + * Licensed to the OpenAirInterface (OAI) Software Alliance under one or more
 + * contributor license agreements.  See the NOTICE file distributed with
@@ -1304,7 +1332,6 @@ index 0000000000..0dcb3fe40d
 +{
 +  return 0;
 +}
-+
 diff --git a/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface.h b/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface.h
 index ca57c9bab3..e8b5a1d9c3 100644
 --- a/openair1/PHY/CODING/nrLDPC_coding/nrLDPC_coding_interface.h
@@ -1605,7 +1632,7 @@ index 60bc63dac4..0d97317281 100644
      }
    }
 diff --git a/openair1/PHY/NR_TRANSPORT/nr_prach.c b/openair1/PHY/NR_TRANSPORT/nr_prach.c
-index 76d9b1185f..50aa21c1db 100644
+index 76d9b1185f..8a0b198bf6 100644
 --- a/openair1/PHY/NR_TRANSPORT/nr_prach.c
 +++ b/openair1/PHY/NR_TRANSPORT/nr_prach.c
 @@ -132,9 +132,31 @@ int16_t find_nr_prach_ru(RU_t *ru,int frame,int slot, find_type_t type)
@@ -1615,17 +1642,17 @@ index 76d9b1185f..50aa21c1db 100644
 -  AssertFatal((prach_id >= 0) && (prach_id < NUMBER_OF_NR_PRACH_MAX),
 -              "illegal or no prach_id found!!! prach_id %d\n",
 -              prach_id);
-+  
++
 +  // Handle full PRACH list gracefully - reuse oldest entry instead of crashing
 +  if (prach_id < 0 || prach_id >= NUMBER_OF_NR_PRACH_MAX) {
 +    LOG_W(PHY, "PRACH list full! Looking for oldest entry to reuse (frame %d, slot %d)\n", SFN, Slot);
-+    
++
 +    pthread_mutex_lock(&ru->prach_list_mutex);
 +    // Find the oldest entry (smallest frame.slot combination)
 +    int oldest_id = 0;
 +    int oldest_frame = ru->prach_list[0].frame;
 +    int oldest_slot = ru->prach_list[0].slot;
-+    
++
 +    for (int i = 1; i < NUMBER_OF_NR_RU_PRACH_MAX; i++) {
 +      if (ru->prach_list[i].frame < oldest_frame ||
 +          (ru->prach_list[i].frame == oldest_frame && ru->prach_list[i].slot < oldest_slot)) {
@@ -1634,7 +1661,7 @@ index 76d9b1185f..50aa21c1db 100644
 +        oldest_slot = ru->prach_list[i].slot;
 +      }
 +    }
-+    
++
 +    prach_id = oldest_id;
 +    LOG_W(PHY, "Reusing PRACH entry %d (was frame %d, slot %d, now frame %d, slot %d)\n",
 +          prach_id, oldest_frame, oldest_slot, SFN, Slot);

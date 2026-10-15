@@ -33,7 +33,9 @@ sudo apt update
 sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin nvidia-container
 
 # add user to docker group
-if id -nG "$USER" | grep -qw "docker"; then
+if [ -z "${USER:-}" ]; then
+  echo "Warning: USER is not set. Skipping docker group configuration. You may need to add yourself to the docker group manually."
+elif id -nG "$USER" | grep -qw "docker"; then
   echo "User $USER is already in the 'docker' group. Skipping..."
 else
   # add user to docker group
